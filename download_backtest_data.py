@@ -105,7 +105,9 @@ def main():
                 else:
                     print(f"[{date_str}] Failed to fetch option chain after 3 attempts, skipping")
                     full_chain = {}
-        chain = full_chain
+        # Filter for options expiring today (symbol format: root + yymmdd)
+        exp_str = dt_date.strftime('%y%m%d')
+        chain = {sym: snap for sym, snap in full_chain.items() if sym[3:9] == exp_str}
         # Save raw chain
         import pickle
         with open(day_dir / 'chain.pkl', 'wb') as f:
