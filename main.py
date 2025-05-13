@@ -33,7 +33,8 @@ OI_THRESHOLD = 500
 SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
 LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
 STRIKE_RANGE = 0.1
-SCAN_INTERVAL = 600
+# Scan every 5 minutes instead of 10 to catch more delta swings
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
 risk_free_rate = 0.01
 timezone = ZoneInfo("America/New_York")
 
