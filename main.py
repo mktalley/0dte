@@ -28,6 +28,12 @@ capital_pool = 100000
 max_risk_per_trade = 1000
 STOP_LOSS_PERCENTAGE = float(os.getenv("STOP_LOSS_PERCENTAGE", "0.5"))
 PROFIT_TAKE_PERCENTAGE = float(os.getenv("PROFIT_TAKE_PERCENTAGE", "0.5"))
+# Ensure timezone and logger are available for dynamic config
+timezone = ZoneInfo("America/New_York")
+
+def log(msg):
+    print(f"[{datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+
 # Dynamic parameter selection based on day of week
 now_dt = datetime.now(timezone)
 dow = now_dt.weekday()  # 0=Mon, 4=Fri
@@ -55,7 +61,7 @@ else:  # Fri: tight settings
 # Scan every 5 minutes instead of 10 to catch more delta swings
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
 risk_free_rate = 0.01
-timezone = ZoneInfo("America/New_York")
+
 
 # === CLIENTS ===
 trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
