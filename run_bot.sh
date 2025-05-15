@@ -5,9 +5,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-LOG_FILE="logs/paper_bot.log"
+LOG_DIR="logs"
 
 while true; do
+  # Build dated log file name
+  current_date=$(date '+%Y-%m-%d')
+  LOG_FILE="$LOG_DIR/paper_bot_${current_date}.log"
+  mkdir -p "$LOG_DIR"
+
   # Log start time
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚀 Starting bot" >> "$LOG_FILE"
   # Run the bot
