@@ -5,7 +5,7 @@ import csv
 import time as time_module
 import pandas as pd
 import numpy as np
-from datetime import datetime, time as dt_time, date, timedelta
+from datetime import datetime, time as dt_time, date
 from scipy.stats import norm
 from scipy.optimize import brentq
 from zoneinfo import ZoneInfo
@@ -26,42 +26,16 @@ API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 PAPER = True
 capital_pool = 100000
 max_risk_per_trade = 1000
-STOP_LOSS_PERCENTAGE = float(os.getenv("STOP_LOSS_PERCENTAGE", "0.5"))
-PROFIT_TAKE_PERCENTAGE = float(os.getenv("PROFIT_TAKE_PERCENTAGE", "0.5"))
-# Ensure timezone and logger are available for dynamic config
-timezone = ZoneInfo("America/New_York")
-
-def log(msg):
-    print(f"[{datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
-
-# Dynamic parameter selection based on day of week
-now_dt = datetime.now(timezone)
-dow = now_dt.weekday()  # 0=Mon, 4=Fri
-if dow <= 1:  # Mon/Tue: aggressive early-week settings
-    log("⚙️ Using aggressive early-week parameters")
-    MIN_CREDIT_PERCENTAGE = float(os.getenv("MIN_CREDIT_PERCENTAGE", "0.15"))
-    OI_THRESHOLD = int(os.getenv("OI_THRESHOLD", "200"))
-    SHORT_PUT_DELTA_RANGE = (-0.5, -0.3)
-    LONG_PUT_DELTA_RANGE = (-0.3, -0.1)
-    STRIKE_RANGE = float(os.getenv("STRIKE_RANGE", "0.2"))
-elif dow <= 3:  # Wed/Thu: relaxed mid-week settings
-    log("⚙️ Using relaxed mid-week parameters")
-    MIN_CREDIT_PERCENTAGE = float(os.getenv("MIN_CREDIT_PERCENTAGE", "0.15"))
-    OI_THRESHOLD = int(os.getenv("OI_THRESHOLD", "100"))
-    SHORT_PUT_DELTA_RANGE = (-0.5, -0.3)
-    LONG_PUT_DELTA_RANGE = (-0.3, -0.1)
-    STRIKE_RANGE = float(os.getenv("STRIKE_RANGE", "0.25"))
-else:  # Fri: tight settings
-    log("⚙️ Using Friday expiration parameters")
-    MIN_CREDIT_PERCENTAGE = float(os.getenv("MIN_CREDIT_PERCENTAGE", "0.25"))
-    OI_THRESHOLD = int(os.getenv("OI_THRESHOLD", "500"))
-    SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
-    LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
-    STRIKE_RANGE = float(os.getenv("STRIKE_RANGE", "0.1"))
-# Scan every 5 minutes instead of 10 to catch more delta swings
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
+STOP_LOSS_PERCENTAGE = 0.5
+PROFIT_TAKE_PERCENTAGE = 0.5
+MIN_CREDIT_PERCENTAGE = 0.25
+OI_THRESHOLD = 500
+SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
+LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
+STRIKE_RANGE = 0.1
+SCAN_INTERVAL = 600
 risk_free_rate = 0.01
-
+timezone = ZoneInfo("America/New_York")
 
 # === CLIENTS ===
 trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
