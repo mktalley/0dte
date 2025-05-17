@@ -1,0 +1,32 @@
+# Python byte-compiled files
+__pycache__/
+*.pyc
+
+# Virtual environments and environment files
+.env
+.venv/
+env/
+
+# Logs and temporary files
+logs/
+*.log
+nohup.out
+temp_backtest.log
+download.log
+
+# Data directories
+data/backtest_data/
+data/backtest_data_multi/
+data/tickers_selected/
+
+# Pickle files
+*.pkl
+
+# IDE and editor config
+.idea/
+.vscode/
+
+# Distribution builds
+build/
+dist/
+*.egg-info/
