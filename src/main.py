@@ -25,7 +25,13 @@ API_KEY = os.getenv("ALPACA_API_KEY")
 API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 PAPER = True
 capital_pool = 100000
-max_risk_per_trade = 1000
+# Default per-trade risk cap (in dollars)
+max_risk_per_trade = 1000  # default cap
+# Optional symbol-specific caps (override default risk for specific underlyings)
+SYMBOL_RISK_CAP = {
+    "SPY": 800,  # allow SPY spreads up to $800 max loss
+    # add other symbols as needed, e.g. "IWM": 400
+}
 STOP_LOSS_PERCENTAGE = float(os.getenv("STOP_LOSS_PERCENTAGE", "0.5"))
 PROFIT_TAKE_PERCENTAGE = float(os.getenv("PROFIT_TAKE_PERCENTAGE", "0.5"))
 # Ensure timezone and logger are available for dynamic config
@@ -194,8 +200,10 @@ def trade(symbol, spot):
     if credit < min_credit:
         log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "rejected")
         return
-    if width * 100 > max_risk_per_trade:
-        log(f"[{symbol}] Skipped: spread too large (${width * 100:.2f})")
+    # Determine risk cap (symbol-specific override or default)
+    cap = SYMBOL_RISK_CAP.get(symbol, max_risk_per_trade)
+    if width * 100 > cap:
+        log(f"[{symbol}] Skipped: spread too large (${width * 100:.2f} > ${cap:.2f})")
         return
     try:
         order = LimitOrderRequest(
