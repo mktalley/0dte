@@ -3,7 +3,9 @@
 
 # Move to script's directory (repository root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+export TZ="America/Los_Angeles"  # Ensure timestamps use Pacific Time
+cd "$ROOT_DIR"
 
 LOG_DIR="logs"
 
@@ -16,7 +18,7 @@ while true; do
   # Log start time
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚀 Starting bot" >> "$LOG_FILE"
   # Run the bot
-  python3 main.py >> "$LOG_FILE" 2>&1
+  python3 -u "$ROOT_DIR/src/main.py" >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
   # Log exit and restart info
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ Bot exited with code $EXIT_CODE; restarting in 5s" >> "$LOG_FILE"

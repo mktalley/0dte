@@ -29,7 +29,7 @@ max_risk_per_trade = 1000
 STOP_LOSS_PERCENTAGE = float(os.getenv("STOP_LOSS_PERCENTAGE", "0.5"))
 PROFIT_TAKE_PERCENTAGE = float(os.getenv("PROFIT_TAKE_PERCENTAGE", "0.5"))
 # Ensure timezone and logger are available for dynamic config
-timezone = ZoneInfo("America/New_York")
+timezone = ZoneInfo("America/Los_Angeles")
 
 def log(msg):
     print(f"[{datetime.now(timezone).strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
