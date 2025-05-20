@@ -6,6 +6,11 @@ Run a backtest for SPY over the past year using the 0DTE put credit spread strat
 Usage:
     python run_backtest_spy_last_year.py
 """
+import os
+import sys
+# Add project root to PYTHONPATH so scripts package can be imported
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from datetime import date, timedelta
 from pathlib import Path
 from scripts.backtest_spy import backtest_symbol
