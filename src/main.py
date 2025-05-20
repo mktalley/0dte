@@ -587,7 +587,12 @@ def main_loop():
                 if p.usd and p.usd.unrealized_plpc is not None:
                     pnl_pct = p.usd.unrealized_plpc
                 # Check stop-loss or profit-take
-                if pnl_pct is not None and (pnl_pct <= -STOP_LOSS_PERCENTAGE or pnl_pct >= PROFIT_TAKE_PERCENTAGE):
+                # Determine applicable profit-take threshold (SPY override)
+                if p.symbol.startswith("SPY"):
+                    profit_take_threshold = 0.75
+                else:
+                    profit_take_threshold = PROFIT_TAKE_PERCENTAGE
+                if pnl_pct is not None and (pnl_pct <= -STOP_LOSS_PERCENTAGE or pnl_pct >= profit_take_threshold):
                     try:
                         resp = trade_client.close_position(p.symbol)
                         status = getattr(resp, 'status', 'closed')
