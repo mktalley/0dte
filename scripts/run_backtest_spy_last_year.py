@@ -8,7 +8,7 @@ Usage:
 """
 from datetime import date, timedelta
 from pathlib import Path
-from backtest_spy import backtest_symbol
+from scripts.backtest_spy import backtest_symbol
 
 def main():
     end_date = date.today()
