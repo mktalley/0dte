@@ -89,6 +89,12 @@ STRIKE_RANGE = settings.strike_range
 SCAN_INTERVAL = settings.scan_interval
 CIRCUIT_BREAKER_THRESHOLD = settings.circuit_breaker_threshold
 
+# Symbol-specific override dictionaries
+SYMBOL_FILTER_OVERRIDES: dict[str, dict] = {}
+SYMBOL_RISK_CAP: dict[str, float] = {}
+# Default max risk per trade (dollars): no hard cap
+max_risk_per_trade = float('inf')
+
 
 
 
@@ -190,9 +196,10 @@ os.makedirs("logs", exist_ok=True)
 # Configure root logger
 logger = logging.getLogger("0dte")
 logger.setLevel(logging.INFO)
-# Console handler
+# Console handler (plain text with timestamp)
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(JsonLogFormatter())
+console_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 # Rotating file handler
 file_handler = RotatingFileHandler("logs/0dte.log", maxBytes=10*1024*1024, backupCount=5)
