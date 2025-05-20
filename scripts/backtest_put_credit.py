@@ -50,6 +50,28 @@ def calculate_delta(option_price, strike, expiry, spot, r, option_type):
 
 
 def get_params_for_date(d):
+    """
+    Return SPY-specific strategy parameters for backtesting.
+    Values can be overridden via environment variables:
+      SPY_MIN_CREDIT_PCT (default 0.10),
+      SPY_OI_THRESHOLD (default 100),
+      SPY_SHORT_PUT_DELTA_RANGE (default "-0.7,-0.3"),
+      SPY_LONG_PUT_DELTA_RANGE (default "-0.3,-0.1"),
+      SPY_STRIKE_RANGE (default "0.2").
+    """
+    min_credit_pct = float(os.getenv("SPY_MIN_CREDIT_PCT", "0.10"))
+    oi_threshold = int(os.getenv("SPY_OI_THRESHOLD", "100"))
+    short_range = tuple(map(float, os.getenv("SPY_SHORT_PUT_DELTA_RANGE", "-0.7,-0.3").split(",")))
+    long_range = tuple(map(float, os.getenv("SPY_LONG_PUT_DELTA_RANGE", "-0.3,-0.1").split(",")))
+    strike_range = float(os.getenv("SPY_STRIKE_RANGE", "0.2"))
+    return {
+        'MIN_CREDIT_PCT': min_credit_pct,
+        'OI_THRESHOLD': oi_threshold,
+        'SHORT_PUT_DELTA_RANGE': short_range,
+        'LONG_PUT_DELTA_RANGE': long_range,
+        'STRIKE_RANGE': strike_range,
+        'r': 0.01,
+    }
     dow = d.weekday()  # 0=Mon,4=Fri
     if dow <= 1:
         # Mon/Tue aggressive

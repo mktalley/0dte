@@ -114,7 +114,8 @@ def real_backtest_symbol(symbol, start_date, end_date, output_dir, data_dir):
 
 
 
-# Strategy configurations (align with main.py)
+# Strategy configurations (align with main.py; can be overridden via env variables)
+import os
 SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
 LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
 MIN_CREDIT_PERCENTAGE = 0.25  # fraction of spread width per share

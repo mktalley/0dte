@@ -1,0 +1,9 @@
+# Runtime dependencies for 0DTE bot and backtesting
+numpy
+pandas
+scipy
+yfinance
+alpaca-py
+pydantic
+tenacity
+python-dotenv
