@@ -424,7 +424,7 @@ def get_0dte_options(symbol):
         underlying_symbols=[symbol],
         strike_price_gte=min_strike,
         strike_price_lte=max_strike,
-        expiration_date=today,
+        expiration_date=date.today(),
         status=AssetStatus.ACTIVE,
         root_symbol=symbol,
         type=ContractType.PUT,
