@@ -18,7 +18,7 @@ from scripts.backtest_spy import backtest_symbol
 def main():
     end_date = date.today()
     start_date = end_date - timedelta(days=365)
-    output_dir = Path("backtests") / f"{end_date.isoformat()}_SPY"
+    output_dir = Path("backtests") / f"SPY_{start_date.isoformat()}_to_{end_date.isoformat()}"
     backtest_symbol("SPY", start_date, end_date, output_dir)
 
 if __name__ == "__main__":
