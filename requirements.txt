@@ -7,3 +7,4 @@ alpaca-py
 pydantic
 tenacity
 python-dotenv
+schedule

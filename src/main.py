@@ -24,7 +24,8 @@ from logging.handlers import RotatingFileHandler
 import functools
 from tenacity import retry, wait_exponential, stop_after_attempt
 # === CONFIGURATION VALIDATION ===
-from pydantic import BaseSettings, Field, ValidationError
+from pydantic_settings import BaseSettings
+from pydantic import Field, ValidationError
 from typing import Optional
 import sys
 
@@ -100,7 +101,10 @@ def send_email(subject, body):
     msg["To"] = EMAIL_TO
     try:
         server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls()
+        try:
+            server.starttls()
+        except Exception:
+            pass
         if EMAIL_USER and EMAIL_PASS:
             server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_FROM, EMAIL_TO.split(","), msg.as_string())
@@ -209,7 +213,7 @@ def log(msg):
 
 
 # Dynamic parameter selection based on day of week
-dow = now_dt.weekday()  # 0=Mon, 4=Fri
+dow = datetime.now(tz=timezone).weekday()  # 0=Mon, 4=Fri
 if dow <= 1:  # Mon/Tue: aggressive early-week settings
     log("⚙️ Using aggressive early-week parameters")
     MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage
@@ -256,6 +260,8 @@ SCAN_INTERVAL = settings.scan_interval
 risk_free_rate = 0.01
 
 
+# Default to paper trading
+PAPER = True
 # === CLIENTS ===
 trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
 option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET)
@@ -335,6 +341,11 @@ def calculate_iv(option_price, S, K, T, r, option_type):
         return None
 
 def calculate_delta(option_price, strike, expiry, spot, r, option_type):
+    # Handle naive and aware expiry datetimes
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone)
+    else:
+        expiry = expiry.astimezone(timezone)
     now = datetime.now(tz=timezone)
     T = max((expiry - now).total_seconds() / (365 * 24 * 3600), 1e-6)
     iv = calculate_iv(option_price, spot, strike, T, r, option_type)
@@ -488,6 +499,8 @@ def trade(symbol, spot):
     try:
         account = trade_client.get_account()
         equity = float(account.equity)
+    except Exception as e:
+        log(f"[{symbol}] Error fetching account: {e}")
         return
     risk_amt = equity * RISK_PER_TRADE_PERCENTAGE
     risk_cap_amt = min(cap, risk_amt)
@@ -498,6 +511,8 @@ def trade(symbol, spot):
     # === CONCURRENCY LIMIT ===
     try:
         positions = trade_client.get_all_positions()
+    except Exception as e:
+        log(f"[{symbol}] Error fetching positions: {e}")
         return
     option_positions = [p for p in positions if p.asset_class == AssetClass.US_OPTION]
     num_spreads = len(option_positions) // 2
@@ -526,7 +541,9 @@ def trade(symbol, spot):
         trade_client.submit_order(order)
         log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "submitted")
         log(f"✅ {symbol} Spread placed: Credit ${credit:.2f}, Width ${width:.2f}")
+    except Exception as e:
         log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "submission_failed")
+        log(f"[{symbol}] Error submitting order: {e}")
 
 # === MAIN LOOP ===
 
@@ -546,8 +563,10 @@ def main_loop():
                     quote = option_data_client.get_option_latest_quote(
                         OptionLatestQuoteRequest(symbol_or_symbols=p.symbol)
                     ).get(p.symbol)
-                    mid = (quote.bid_price + quote.ask_price) / 2
+                except Exception as e:
+                    log(f"[{p.symbol}] Error fetching quote: {e}")
                     continue
+                mid = (quote.bid_price + quote.ask_price) / 2
                 qty = int(p.qty)
                 entry = float(p.avg_entry_price)
                 contract_size = 100
@@ -576,6 +595,10 @@ def main_loop():
                         msg = f"⚠️ Closed {p.symbol} due to {action}: PnL ${pnl:.2f}"
                         log(msg)
                         send_email(f"Position Closed: {p.symbol}", msg)
+                    except Exception as e:
+                        log(f"[{p.symbol}] Error closing position: {e}")
+                        continue
+
             for symbol in TICKERS:
                 if symbol in prices:
                     trade(symbol, prices[symbol])
@@ -590,6 +613,7 @@ if __name__ == "__main__":
     from pathlib import Path
     from datetime import date, timedelta
     import runpy
+    import schedule
     parser = argparse.ArgumentParser(description="0DTE Bot with optional backtest")
     parser.add_argument('--backtest', action='store_true', help='Run SPY backtest for the past year')
     parser.add_argument('--start', help='Start date YYYY-MM-DD')
@@ -600,5 +624,14 @@ if __name__ == "__main__":
         script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'run_backtest_spy_last_year.py'))
         runpy.run_path(script_path, run_name='__main__')
     else:
-        main_loop()
+        # Schedule main_loop at market open 09:30 Mon-Fri
+        schedule.every().monday.at("09:30").do(main_loop)
+        schedule.every().tuesday.at("09:30").do(main_loop)
+        schedule.every().wednesday.at("09:30").do(main_loop)
+        schedule.every().thursday.at("09:30").do(main_loop)
+        schedule.every().friday.at("09:30").do(main_loop)
+        log("✅ Scheduled 0DTE bot to run at 09:30 Mon-Fri")
+        while True:
+            schedule.run_pending()
+            time_module.sleep(60)
 
