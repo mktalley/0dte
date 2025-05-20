@@ -387,7 +387,9 @@ def should_exit(pnl_pct: float) -> str | None:
     return None
 
 def is_market_open():
-    return now.weekday() < 5 and dt_time(9, 30) <= now.time() <= dt_time(16, 0)
+    # Check US equity market hours in Eastern Time
+    now_et = datetime.now(tz=ZoneInfo("America/New_York"))
+    return now_et.weekday() < 5 and dt_time(9, 30) <= now_et.time() <= dt_time(16, 0)
 
 def get_fallback_tickers():
     return ["SPY", "QQQ", "TSLA", "AAPL", "MSFT", "NVDA", "META", "AMZN", "AMD", "GOOG",
@@ -613,7 +615,6 @@ if __name__ == "__main__":
     from pathlib import Path
     from datetime import date, timedelta
     import runpy
-    import schedule
     parser = argparse.ArgumentParser(description="0DTE Bot with optional backtest")
     parser.add_argument('--backtest', action='store_true', help='Run SPY backtest for the past year')
     parser.add_argument('--start', help='Start date YYYY-MM-DD')
@@ -624,14 +625,7 @@ if __name__ == "__main__":
         script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'run_backtest_spy_last_year.py'))
         runpy.run_path(script_path, run_name='__main__')
     else:
-        # Schedule main_loop at market open 09:30 Mon-Fri
-        schedule.every().monday.at("09:30").do(main_loop)
-        schedule.every().tuesday.at("09:30").do(main_loop)
-        schedule.every().wednesday.at("09:30").do(main_loop)
-        schedule.every().thursday.at("09:30").do(main_loop)
-        schedule.every().friday.at("09:30").do(main_loop)
-        log("✅ Scheduled 0DTE bot to run at 09:30 Mon-Fri")
-        while True:
-            schedule.run_pending()
-            time_module.sleep(60)
+        # Start main_loop now; main_loop will sleep 15 minutes until market open (09:30 ET)
+        log("✅ Starting 0DTE bot now; it will sleep every 15 minutes until market open at 09:30 ET if closed.")
+        main_loop()
 
