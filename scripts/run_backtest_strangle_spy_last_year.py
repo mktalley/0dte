@@ -25,8 +25,8 @@ CONTRACTS_PER_DAY = max(1, int(DAILY_RISK / RISK_PER_CONTRACT))  # number of str
 # Parse command-line arguments
 parser = ArgumentParser(description="Run daily 0DTE SPY short strangle backtest")
 parser.add_argument('-d', '--dynamic', action='store_true', help='Enable dynamic intraday leg adjustments')
-parser.add_argument('--drop-pct', type=float, default=0.005, help='Threshold for drop from open to remove call/add put')
-parser.add_argument('--rise-pct', type=float, default=0.003, help='Threshold for rise from open to remove put/add call')
+parser.add_argument('--drop-pct', type=float, default=0.002, help='Threshold for drop from open to remove call/add put (default: 0.2%)')
+parser.add_argument('--rise-pct', type=float, default=0.001, help='Threshold for rise from open to remove put/add call (default: 0.1%)')
 parser.add_argument('-n', '--contracts', type=int, default=CONTRACTS_PER_DAY, help='Number of strangle contracts per day')
 parser.add_argument('-t', '--target', type=float, default=None, help='Target PnL for suggestion')
 parser.add_argument('--start', type=lambda s: date.fromisoformat(s), default=None, help='Start date (YYYY-MM-DD) of backtest')
