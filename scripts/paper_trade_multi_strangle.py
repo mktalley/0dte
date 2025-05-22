@@ -31,6 +31,7 @@ import yfinance as yf
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import brentq
+from scripts.fetch_spy_options import _parse_strike
 
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest
@@ -119,7 +120,7 @@ def trade_strangle(symbol, today, data_client, trade_client, dry_run=False):
         return
 
     # pick nearest strikes
-    pick = lambda chain, K: min(chain, key=lambda o: abs(o.strike_price - K))
+    pick = lambda chain, K: min(chain, key=lambda o: abs(_parse_strike(o.symbol) - K))
     ps_opt = pick(put_chain, K_ps)
     pl_opt = pick(put_chain, K_pl)
     cs_opt = pick(call_chain, K_cs)

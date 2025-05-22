@@ -16,6 +16,7 @@ import csv
 import yfinance as yf
 from scipy.stats import norm
 from scipy.optimize import brentq
+from scripts.fetch_spy_options import _parse_strike
 from dotenv import load_dotenv
 
 from alpaca.data.historical.option import OptionHistoricalDataClient
@@ -128,7 +129,7 @@ def main():
 
     # pick nearest strikes
     def best_opt(chain, K):
-        return min(chain, key=lambda o: abs(o.strike_price - K))
+        return min(chain, key=lambda o: abs(_parse_strike(o.symbol) - K))
 
     put_short_opt  = best_opt(put_chain, K_sp_short)
     put_long_opt   = best_opt(put_chain, K_sp_long)

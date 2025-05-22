@@ -5,6 +5,11 @@ from datetime import datetime
 from alpaca.data.historical import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest
 
+# Helper to parse strike price from OCC symbol
+def _parse_strike(symbol: str) -> float:
+     """Parse strike price from OCC symbol: last 8 digits are strike*1000."""
+     return int(symbol[-8:]) / 1000.0
+
 load_dotenv()
 
 API_KEY = os.getenv("ALPACA_API_KEY")
@@ -28,7 +33,7 @@ for option in response:
     if option.quote and option.greeks:
         results.append({
             "symbol": option.symbol,
-            "strike": option.strike_price,
+            "strike": _parse_strike(option.symbol),
             "expiration": option.expiration_date,
             "delta": option.greeks.delta,
             "bid": option.quote.bid_price,
