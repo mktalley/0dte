@@ -203,85 +203,75 @@ console_handler = logging.StreamHandler()
 console_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
-# Timed rotating file handler at midnight PST
-file_handler = TimedRotatingFileHandler("logs/0dte.log", when="midnight", interval=1, backupCount=30)
-# Suffix for rotated logs: date pattern YYYY-MM-DD
-file_handler.suffix = "%Y-%m-%d"
-# Rename rotated files to logs/YYYY-MM-DD.log
-file_handler.namer = lambda default_name: default_name.replace("logs/0dte.log.", "logs/") + ".log"
+# === DAILY ROTATING LOG HANDLERS ===
+class DailyRotatingFileHandler(TimedRotatingFileHandler):
+    """
+    Rotates log files daily into a subdirectory named by date (YYYY-MM-DD).
+    """
+    def __init__(self, orig_filename, when, interval, backupCount, timezone, log_dir="logs"):
+        self.orig_filename = orig_filename
+        self.timezone = timezone
+        self.log_dir = log_dir
+        # Determine today's directory
+        self.current_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
+        self.log_dir_today = os.path.join(self.log_dir, self.current_date)
+        os.makedirs(self.log_dir_today, exist_ok=True)
+        file_path = os.path.join(self.log_dir_today, self.orig_filename)
+        super().__init__(file_path, when=when, interval=interval, backupCount=backupCount)
+
+    def shouldRollover(self, record):
+        # Rotate at midnight PST when date changes
+        new_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
+        if new_date != self.current_date:
+            return True
+        return super().shouldRollover(record)
+
+    def doRollover(self):
+        super().doRollover()
+        # After rotation, update baseFilename to new day directory
+        new_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
+        self.current_date = new_date
+        self.log_dir_today = os.path.join(self.log_dir, new_date)
+        os.makedirs(self.log_dir_today, exist_ok=True)
+        new_base = os.path.join(self.log_dir_today, self.orig_filename)
+        self.baseFilename = new_base
+        if self.stream:
+            self.stream.close()
+        self.stream = self._open()
+
+# JSON daily log handler
+file_handler = DailyRotatingFileHandler(
+    orig_filename="0dte.log",
+    when="midnight",
+    interval=1,
+    backupCount=30,
+    timezone=timezone,
+)
 file_handler.setFormatter(JsonLogFormatter())
 logger.addHandler(file_handler)
-# ---------------------
-# Human-readable rotating file handler (Pacific Time)
-human_handler = TimedRotatingFileHandler("logs/0dte_human.log", when="midnight", interval=1, backupCount=30)
-# Suffix for rotated logs: date pattern YYYY-MM-DD
-human_handler.suffix = "%Y-%m-%d"
-# Rename rotated files to logs/YYYY-MM-DD.log
-def human_namer(default_name):
-    # default_name example: logs/0dte_human.log.2025-05-21
-    date_part = default_name.rsplit('.', 1)[1]
-    return f"logs/{date_part}.log"
-human_handler.namer = human_namer
-# Formatter that uses Pacific Time zone for timestamps
+
+# Human-readable daily log handler (Pacific Time)
 class PacificFormatter(logging.Formatter):
     def formatTime(self, record, datefmt=None):
         ct = datetime.fromtimestamp(record.created, tz=timezone)
         if datefmt:
             return ct.strftime(datefmt)
         return ct.isoformat()
-human_formatter = PacificFormatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S %Z")
+human_handler = DailyRotatingFileHandler(
+    orig_filename="0dte_human.log",
+    when="midnight",
+    interval=1,
+    backupCount=30,
+    timezone=timezone,
+)
+human_formatter = PacificFormatter(
+    "[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S %Z",
+)
 human_handler.setFormatter(human_formatter)
 logger.addHandler(human_handler)
-# ---------------------
 
-# Override legacy log(msg) to route through structured logger with level parsing
-# ❌ -> ERROR, ⚠️ -> WARNING, otherwise INFO
-
-def log(msg):
-    level = logging.INFO
-    if isinstance(msg, str):
-        if msg.startswith("❌"):
-            level = logging.ERROR
-        elif msg.startswith("⚠️"):
-            level = logging.WARNING
-    logger.log(level, msg)
-
-
-# Dynamic parameter selection based on day of week
-dow = datetime.now(tz=timezone).weekday()  # 0=Mon, 4=Fri
-if dow <= 1:  # Mon/Tue: aggressive early-week settings
-    log("⚙️ Using aggressive early-week parameters")
-    MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage
-    OI_THRESHOLD = settings.oi_threshold
-    SHORT_PUT_DELTA_RANGE = (-0.5, -0.3)
-    LONG_PUT_DELTA_RANGE = (-0.3, -0.1)
-    STRIKE_RANGE = settings.strike_range
-elif dow <= 3:  # Wed/Thu: relaxed mid-week settings
-    log("⚙️ Using relaxed mid-week parameters")
-    MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage
-    OI_THRESHOLD = settings.oi_threshold
-    SHORT_PUT_DELTA_RANGE = (-0.5, -0.3)
-    LONG_PUT_DELTA_RANGE = (-0.3, -0.1)
-    STRIKE_RANGE = settings.strike_range
-else:  # Fri: tight settings
-    log("⚙️ Using Friday expiration parameters")
-    MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage
-    OI_THRESHOLD = settings.oi_threshold
-    SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
-    LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
-    STRIKE_RANGE = settings.strike_range
-
-
-# === SYMBOL-SPECIFIC FILTER OVERRIDES ===
-SYMBOL_FILTER_OVERRIDES = {
-    "SPY": {
-        # Loosen SPY credit and delta bands to capture wider 0DTE spreads (e.g. 593/585)
-        "MIN_CREDIT_PERCENTAGE": settings.spy_min_credit_percentage,  # 12% vs default 15%
-        "SHORT_PUT_DELTA_RANGE": (-0.7, -0.3),  # deeper OTM short put
-        "LONG_PUT_DELTA_RANGE": (-0.3, -0.1),
-        "OI_THRESHOLD": 100,   # deeper OTM long put
-    }
-}
+logger.info("🚀 Log handlers initialized: JSON and human-readable (PST)")
 
 # === OVERRIDE FILTERS FOR WIDER SPREADS (Wider test) ===
 MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage  # allow firmer credit on wider spreads
