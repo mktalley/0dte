@@ -211,6 +211,28 @@ file_handler.suffix = "%Y-%m-%d"
 file_handler.namer = lambda default_name: default_name.replace("logs/0dte.log.", "logs/") + ".log"
 file_handler.setFormatter(JsonLogFormatter())
 logger.addHandler(file_handler)
+# ---------------------
+# Human-readable rotating file handler (Pacific Time)
+human_handler = TimedRotatingFileHandler("logs/0dte_human.log", when="midnight", interval=1, backupCount=30)
+# Suffix for rotated logs: date pattern YYYY-MM-DD
+human_handler.suffix = "%Y-%m-%d"
+# Rename rotated files to logs/YYYY-MM-DD.log
+def human_namer(default_name):
+    # default_name example: logs/0dte_human.log.2025-05-21
+    date_part = default_name.rsplit('.', 1)[1]
+    return f"logs/{date_part}.log"
+human_handler.namer = human_namer
+# Formatter that uses Pacific Time zone for timestamps
+class PacificFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created, tz=timezone)
+        if datefmt:
+            return ct.strftime(datefmt)
+        return ct.isoformat()
+human_formatter = PacificFormatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S %Z")
+human_handler.setFormatter(human_formatter)
+logger.addHandler(human_handler)
+# ---------------------
 
 # Override legacy log(msg) to route through structured logger with level parsing
 # ❌ -> ERROR, ⚠️ -> WARNING, otherwise INFO
