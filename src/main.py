@@ -204,39 +204,43 @@ console_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 # === DAILY ROTATING LOG HANDLERS ===
+import shutil
+
 class DailyRotatingFileHandler(TimedRotatingFileHandler):
     """
-    Rotates log files daily into a subdirectory named by date (YYYY-MM-DD).
+    Keeps active logs at logs/orig_filename; archives yesterday's log into logs/YYYY-MM-DD/orig_filename on rollover.
     """
     def __init__(self, orig_filename, when, interval, backupCount, timezone, log_dir="logs"):
         self.orig_filename = orig_filename
         self.timezone = timezone
         self.log_dir = log_dir
-        # Determine today's directory
-        self.current_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
-        self.log_dir_today = os.path.join(self.log_dir, self.current_date)
-        os.makedirs(self.log_dir_today, exist_ok=True)
-        file_path = os.path.join(self.log_dir_today, self.orig_filename)
+        # Ensure top-level log directory exists
+        os.makedirs(self.log_dir, exist_ok=True)
+        # Active file stays at top level
+        file_path = os.path.join(self.log_dir, self.orig_filename)
         super().__init__(file_path, when=when, interval=interval, backupCount=backupCount)
 
     def shouldRollover(self, record):
-        # Rotate at midnight PST when date changes
-        new_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
-        if new_date != self.current_date:
-            return True
         return super().shouldRollover(record)
 
     def doRollover(self):
-        super().doRollover()
-        # After rotation, update baseFilename to new day directory
-        new_date = datetime.now(tz=self.timezone).strftime("%Y-%m-%d")
-        self.current_date = new_date
-        self.log_dir_today = os.path.join(self.log_dir, new_date)
-        os.makedirs(self.log_dir_today, exist_ok=True)
-        new_base = os.path.join(self.log_dir_today, self.orig_filename)
-        self.baseFilename = new_base
+        # Close current log stream
         if self.stream:
             self.stream.close()
+            self.stream = None
+        # Determine date to archive (yesterday in timezone)
+        now = datetime.now(tz=self.timezone)
+        prev_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        subdir = os.path.join(self.log_dir, prev_date)
+        os.makedirs(subdir, exist_ok=True)
+        # Move the finished log into the dated subdirectory
+        src = self.baseFilename
+        dst = os.path.join(subdir, self.orig_filename)
+        shutil.move(src, dst)
+        # Compute next rollover time
+        current_time = int(time_module.time())
+        self.rolloverAt = self.computeRollover(current_time)
+        # Reopen the active log file
         self.stream = self._open()
 
 # JSON daily log handler
