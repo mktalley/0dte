@@ -121,7 +121,7 @@ LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
 MIN_CREDIT_PERCENTAGE = 0.25  # fraction of spread width per share
 MAX_RISK_PER_TRADE = 2000    # maximum per-contract risk in dollars
 STOP_LOSS_PERCENTAGE = 0.5
-PROFIT_TAKE_PERCENTAGE = 0.5
+PROFIT_TAKE_PERCENTAGE = 0.75
 RISK_FREE_RATE = 0.01
 CAPITAL_POOL = 100000
 
@@ -180,7 +180,7 @@ def backtest_symbol(symbol, start_date, end_date, output_dir):
 
     # Combine SPY and VIX into single DataFrame
     vix_close = vix[['Close']].rename(columns={'Close': 'VIX'})
-    data = spy[['Open', 'Close']].join(vix_close, how='inner').dropna()
+    data = spy[['Open', 'High', 'Low', 'Close']].join(vix_close, how='inner').dropna()
     # Compute median VIX to set dynamic max-risk thresholds
     median_vix = data['VIX'].median()
 
@@ -215,19 +215,40 @@ def backtest_symbol(symbol, start_date, end_date, output_dir):
         # Minimum credit as fraction of spread width
         if credit_share < width_share * MIN_CREDIT_PERCENTAGE:
             continue
+        high = row['High']
+        low = row['Low']
         S_close = row['Close']
-        payoff_share = max(K_short - S_close, 0) - max(K_long - S_close, 0)
-        pnl_share = credit_share - payoff_share
-        # Determine per-contract credit and payoff
+        # Profit-taking and stop-loss thresholds (share terms)
+        exit_type = 'eod'
+        profit_pct = PROFIT_TAKE_PERCENTAGE
+        sl_pct = STOP_LOSS_PERCENTAGE
+        # Compute exit payoff thresholds
+        exit_payoff_share_profit = credit_share * (1 - profit_pct)
+        threshold_profit_price = K_short - exit_payoff_share_profit
+        exit_payoff_share_stop = credit_share * (1 + sl_pct)
+        threshold_stop_price = K_short - exit_payoff_share_stop
+        # Determine exit condition
+        if low <= threshold_stop_price:
+            # Stop-loss triggered
+            exit_payoff_share = exit_payoff_share_stop
+            exit_price = threshold_stop_price
+            exit_type = 'sl'
+        elif high >= threshold_profit_price:
+            # Profit-take triggered
+            exit_payoff_share = exit_payoff_share_profit
+            exit_price = threshold_profit_price
+            exit_type = 'tp'
+        else:
+            # Exit at close
+            exit_payoff_share = max(K_short - S_close, 0) - max(K_long - S_close, 0)
+            exit_price = S_close
+        # Per-contract values
         credit_per_contract = credit_share * contract_size
-        payoff_per_contract = payoff_share * contract_size
-        # Use one contract per trade
+        payoff_per_contract = exit_payoff_share * contract_size
         n_contracts = 1
-        # Compute total values
         credit = credit_per_contract * n_contracts
         payoff = payoff_per_contract * n_contracts
         pnl = credit - payoff
-        # Update capital
         capital += pnl
         records.append({
             'date': dt.date(),
@@ -239,6 +260,7 @@ def backtest_symbol(symbol, start_date, end_date, output_dir):
             'pnl': pnl,
             'capital': capital,
             'win': pnl > 0,
+            'exit_type': exit_type,
         })
     results = pd.DataFrame(records)
     total = len(results)

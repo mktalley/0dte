@@ -46,8 +46,15 @@ def compute_trade_pnl(df):
             close_prices[sym] = 0.0
     # Map close price and compute PnL per row
     df['close_price'] = df['symbol'].map(close_prices)
-    df['instr_s'] = (df['short_strike'] - df['close_price']).clip(lower=0)
-    df['instr_l'] = (df['long_strike'] - df['close_price']).clip(lower=0)
+    # Ensure close_price is numeric
+    df['close_price'] = pd.to_numeric(df['close_price'], errors='coerce').fillna(0.0)
+    # Compute intrinsic values for short and long strikes using numpy arrays to avoid ambiguous truth-value
+    diff_s = df['short_strike'] - df['close_price']
+    arr_s = diff_s.to_numpy()
+    df['instr_s'] = np.where(arr_s > 0, arr_s, 0.0)
+    diff_l = df['long_strike'] - df['close_price']
+    arr_l = diff_l.to_numpy()
+    df['instr_l'] = np.where(arr_l > 0, arr_l, 0.0)
     df['pnl'] = (df['credit'] - (df['instr_s'] - df['instr_l'])) * 100
     # Clean up intermediate columns
     df.drop(columns=['close_price', 'instr_s', 'instr_l'], inplace=True)
@@ -116,36 +123,49 @@ def main():
         balance = 0.0
         realized_pnl = 0.0
 
-    # load and filter trades
-    # load and filter trades
-    cols = ['timestamp','symbol','short_strike','long_strike','credit','spread_width','status']
-    df = pd.read_csv('logs/trade_log.csv', names=cols, header=0)
-    df = df[df['timestamp'].str.startswith(df_date) & (df['status'] == 'submitted')].copy()
+    # load and filter closed trades
+    exit_cols = ['timestamp','symbol','side','qty','exit_price','pnl','ratio','status']
+    df = pd.read_csv('logs/exit_log.csv', names=exit_cols, header=0)
+    df = df[df['timestamp'].str.startswith(df_date)].copy()
     if df.empty:
-        print(f"No trades found for {df_date}")
+        print(f"No closed trades found for {df_date}")
         return
-    # compute PnL per trade
-    df = compute_trade_pnl(df)
-    # compute metrics
-    m = compute_metrics(df)
-    # build report lines
+    # ensure numeric pnl
+    df['pnl'] = df['pnl'].astype(float)
+    # compute metrics for closed trades
+    total_trades = len(df)
+    wins = int((df['pnl'] > 0).sum())
+    losses = int((df['pnl'] < 0).sum())
+    win_rate = wins / total_trades * 100 if total_trades else 0.0
+    total_pnl = float(df['pnl'].sum())
+    avg_pnl = float(df['pnl'].mean())
+    largest_gain = float(df['pnl'].max())
+    largest_loss = float(df['pnl'].min())
+    m = {
+        'total_trades': total_trades,
+        'wins': wins,
+        'losses': losses,
+        'win_rate': win_rate,
+        'total_pnl': total_pnl,
+        'avg_pnl': avg_pnl,
+        'largest_gain': largest_gain,
+        'largest_loss': largest_loss,
+    }
+    # build report lines for closed trades
     lines = [
         f"End-of-Day Report for {df_date}",
-        f"Daily P&L: ${m['total_pnl']:.2f}",
-        f"Total Trades: {m['total_trades']}",
+        f"Total Closed Trades: {m['total_trades']}",
+        f"Closed Trades P&L: ${m['total_pnl']:.2f}",
         f"Win Rate: {m['win_rate']:.1f}% ({m['wins']}W/{m['losses']}L)",
         f"Average P&L per Trade: ${m['avg_pnl']:.2f}",
         f"Largest Gain: ${m['largest_gain']:.2f}",
         f"Largest Loss: ${m['largest_loss']:.2f}",
-        f"Total Credit Collected: ${m['total_credit']:.2f}",
-        f"Max Drawdown: ${m['max_drawdown']:.2f}",
-        f"Average Time in Trade: {m['avg_time_in_trade']:.1f} minutes",
-        f"Realized P&L: ${realized_pnl:.2f}",
+        f"Account Balance Change: ${realized_pnl:.2f}",
         f"Account Balance: ${balance:.2f}",
     ]
-    body = "\n".join(lines)
-    subject = f"EOD 0DTE Report {df_date}: P&L ${m['total_pnl']:.2f}, Realized P&L ${realized_pnl:.2f}, Balance ${balance:.2f}, Win {m['win_rate']:.1f}%"
-    # Display report
+    body = "
+".join(lines)
+    subject = f"EOD 0DTE Report {df_date}: Closed P&L ${m['total_pnl']:.2f}, Bal Change ${realized_pnl:.2f}, Balance ${balance:.2f}, Win {m['win_rate']:.1f}%"    # Display report
     print("Subject:", subject)
     print(body)
     # Send the email

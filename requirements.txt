@@ -8,3 +8,4 @@ pydantic
 tenacity
 python-dotenv
 schedule
+watchdog

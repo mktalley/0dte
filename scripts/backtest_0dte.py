@@ -2,7 +2,7 @@ import pandas as pd
 import datetime
 
 # === CONFIGURATION ===
-TARGET_PROFIT = 0.5  # 50% gain on credit
+TARGET_PROFIT = 0.75  # 75% gain on credit  # 50% gain on credit
 STOP_LOSS = 0.5      # 50% loss on credit
 MIN_CREDIT = 0.25    # Minimum acceptable credit
 SHORT_DELTA_RANGE = (-0.42, -0.38)

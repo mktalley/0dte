@@ -10,11 +10,28 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def main():
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate charts from backtest results")
+    parser.add_argument('--input', '-i', default='backtest_spy_results.csv', help='Input CSV file for backtest results')
+    parser.add_argument('--outdir', '-o', default='charts', help='Output directory for charts')
+    return parser.parse_args()
+
+
+def main(input_csv: str, output_dir: str):
     # Load backtest results
-    csv_file = "backtest_spy_results.csv"
+    csv_file = input_csv
     if not os.path.isfile(csv_file):
-        print(f"Error: {csv_file} not found. Run backtest_spy.py first.")
+        print(f"Error: {csv_file} not found.")
+        return
+    df = pd.read_csv(csv_file, parse_dates=["date"])
+    df.sort_values("date", inplace=True)
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+
         return
     df = pd.read_csv(csv_file, parse_dates=["date"])  
     df.sort_values("date", inplace=True)

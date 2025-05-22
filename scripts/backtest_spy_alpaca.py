@@ -87,13 +87,17 @@ def backtest_spy(start_date: date, end_date: date, output_csv: str):
             print(f"{current} - Chain fetch error: {e}")
             current += timedelta(days=1)
             continue
-                # determine weekly expiration (Friday) and filter chain
-        days_until_expiry = (4 - current.weekday()) % 7
-        expiry_date = current + timedelta(days=days_until_expiry)
-        expiry_code = expiry_date.strftime("%y%m%d")
+                # determine expiration code: try same-day 0DTE first, then fallback to weekly Friday
+        expiry_code = current.strftime("%y%m%d")
         snapshots = {sym: snap for sym, snap in full_chain.items() if sym[3:9] == expiry_code}
         if not snapshots:
-            print(f"{current} - No options expiring on {expiry_date} (expiry code {expiry_code})")
+            # fallback to next Friday
+            days_until_expiry = (4 - current.weekday()) % 7
+            expiry_date = current + timedelta(days=days_until_expiry)
+            expiry_code = expiry_date.strftime("%y%m%d")
+            snapshots = {sym: snap for sym, snap in full_chain.items() if sym[3:9] == expiry_code}
+        if not snapshots:
+            print(f"{current} - No options expiring on {expiry_code}")
             current += timedelta(days=1)
             continue
 

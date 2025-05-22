@@ -17,9 +17,16 @@ while true; do
 
   # Log start time
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚀 Starting bot" >> "$LOG_FILE"
-  # Run the bot
-  python3 -u "$ROOT_DIR/src/main.py" >> "$LOG_FILE" 2>&1
+  # Calculate seconds until next midnight PST for log rotation
+  now=$(date '+%s')
+  tomorrow=$(date -d 'tomorrow 00:00' '+%s')
+  duration=$((tomorrow - now))
+  # Run the bot until midnight PST (or until it exits)
+  timeout "${duration}s" python3 -u "$ROOT_DIR/src/main.py" >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
+  if [ $EXIT_CODE -eq 124 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Midnight PST reached; rotating log file" >> "$LOG_FILE"
+  fi
   # Log exit and restart info
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ Bot exited with code $EXIT_CODE; restarting in 5s" >> "$LOG_FILE"
   # Wait before restarting

@@ -60,21 +60,85 @@ load_dotenv()
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 logger = logging.getLogger('trading_bot')
 logger.setLevel(LOG_LEVEL)
-fh = RotatingFileHandler('bot.log', maxBytes=5*1024*1024, backupCount=3)
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-fh.setFormatter(formatter)
-logger.addHandler(fh)
+
+import shutil
+from logging.handlers import TimedRotatingFileHandler
+import pytz
+ET_ZONE = pytz.timezone('America/New_York')  # ensure timezone defined for log handler
+
+
+# Create custom handler for daily rotating strangle logs with monthly archives
+class MonthlyRotatingFileHandler(TimedRotatingFileHandler):
+    def __init__(self, orig_filename, when='midnight', interval=1, timezone=None, log_dir='logs/strangle'):
+        self.orig_filename = orig_filename
+        self.timezone = timezone
+        self.log_dir = log_dir
+        os.makedirs(self.log_dir, exist_ok=True)
+        file_path = os.path.join(self.log_dir, orig_filename)
+        super().__init__(file_path, when=when, interval=interval, backupCount=0, utc=False)
+
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        # Archive yesterday's log
+        prev = datetime.now(tz=self.timezone) - timedelta(days=1)
+        date_str = prev.strftime('%Y-%m-%d')
+        month_str = prev.strftime('%Y-%m')
+        dest_dir = os.path.join(self.log_dir, month_str)
+        os.makedirs(dest_dir, exist_ok=True)
+        name, ext = os.path.splitext(self.orig_filename)
+        dst = os.path.join(dest_dir, f"{name}_{date_str}{ext}")
+        shutil.move(self.baseFilename, dst)
+        # Schedule next rollover
+        self.rolloverAt = self.computeRollover(int(time.time()))
+        self.stream = self._open()
+
+# Setup strangle bot log handler
+
+class TzFormatter(logging.Formatter):
+    """Logging formatter that applies a timezone to timestamps"""
+    def __init__(self, fmt=None, datefmt=None, tz=None):
+        super().__init__(fmt, datefmt)
+        self.tz = tz
+
+    def formatTime(self, record, datefmt=None):
+        # Use the specified timezone for timestamp
+        dt = datetime.fromtimestamp(record.created, tz=self.tz)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return super().formatTime(record, datefmt)
+
+# Log formatter using Pacific Time
+PT_ZONE = pytz.timezone('America/Los_Angeles')
+formatter = TzFormatter('%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S', tz=PT_ZONE)
+handler = MonthlyRotatingFileHandler(orig_filename='strangle.log', timezone=PT_ZONE)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 # Prevent log messages from propagating to the root logger (avoid duplicates)
 logger.propagate = False
 
 
 # Config
+# Account risk sizing
+ACCOUNT_CAPITAL       = float(os.getenv('ACCOUNT_CAPITAL', '38000'))  # total cash available
+DAILY_RISK_PCT        = float(os.getenv('DAILY_RISK_PCT', '0.05'))       # percent of capital to risk per day (default 5%)
+RISK_PER_CONTRACT     = float(os.getenv('RISK_PER_CONTRACT', '100'))    # worst-case loss per contract
+# Compute daily risk budget and contract sizing
+daily_risk            = ACCOUNT_CAPITAL * DAILY_RISK_PCT
+CONTRACTS_PER_DAY     = max(1, int(daily_risk / RISK_PER_CONTRACT))
+# Override profit/stop based on daily budget
+PROFIT_TARGET         = daily_risk
+STOP_LOSS             = -daily_risk
+
+# Base config from env (retained for backward compatibility)
 ET_ZONE = pytz.timezone('America/New_York')
 SYMBOLS = [s.strip().upper() for s in os.getenv('SYMBOLS', 'SPY,SPX,XSP').split(',')]
 ENTRY_TIME = os.getenv('ENTRY_TIME', '09:35')  # ET
 EXIT_TIME = os.getenv('EXIT_TIME', '15:45')    # ET
-PROFIT_TARGET = float(os.getenv('PROFIT_TARGET', '100'))
-STOP_LOSS = float(os.getenv('STOP_LOSS', '-100'))
+
+
 
 # Strategy parameters
 SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
@@ -180,7 +244,12 @@ def trade_strangle(symbol, today):
         if not put_chain or not call_chain:
             logger.info(f"{symbol}: no 0DTE chain on {today}")
             return None
-        pick = lambda chain,K: min(chain, key=lambda o: abs(o.strike_price-K))
+        # pick option snapshot with greeks.delta nearest to target_delta
+        # pick option snapshot with greeks.delta nearest to target_delta
+        pick = lambda chain, target_delta: min(
+    chain,
+    key=lambda snap: abs((snap.greeks.delta if getattr(snap, 'greeks', None) and snap.greeks.delta is not None else 0.0) - target_delta)
+)
         ps = pick(put_chain, K_ps); pl = pick(put_chain, K_pl)
         cs = pick(call_chain, K_cs); cl = pick(call_chain, K_cl)
         legs = [
@@ -189,7 +258,7 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.OPEN),
         ]
-        order = MarketOrderRequest(qty=1, time_in_force=TimeInForce.DAY,
+        order = MarketOrderRequest(qty=CONTRACTS_PER_DAY, time_in_force=TimeInForce.DAY,
                                   order_class=OrderClass.MLEG, type=OrderType.MARKET,
                                   legs=legs)
         resp = trade_client.submit_order(order)
@@ -226,8 +295,16 @@ def monitor_job():
                 logger.info(f"{pos.symbol}: qty={pos.qty}, P/L={pl:.2f}")
         logger.info(f"Total P/L across positions: {total_pl:.2f}")
         if total_pl >= PROFIT_TARGET or total_pl <= STOP_LOSS:
-            logger.info(f"Threshold hit (P/L={total_pl:.2f}), triggering exit.")
-            exit_job()
+            logger.info(f"Threshold hit (P/L={total_pl:.2f}), early exit: closing positions and re-entering.")
+            try:
+                trade_client.close_all_positions()
+                logger.info("All positions closed (early exit).")
+            except Exception as e:
+                logger.error(f"Early exit error: {e}")
+            # Immediately re-enter fresh strangle
+            logger.info("Re-deploying new strangle after early exit.")
+            entry_job()
+            return
     except Exception as e:
         logger.error(f"Monitor error: {e}")
 
@@ -243,19 +320,59 @@ def exit_job():
     scheduler.shutdown(wait=False)
 
 
+
+def remind_job():
+    """Daily reminder at 4 PM Pacific to revisit margin sizing logic."""
+    logger.info("Reminder: revisit margin-based sizing logic.")
+
+
+def heartbeat_job():
+    """Periodic heartbeat until market open"""
+    logger.info(f"Heartbeat: trading bot is alive @ {datetime.now(ET_ZONE)}")
+
+
+
 def schedule_jobs():
     # parse entry and exit times
     eth, etm = map(int, ENTRY_TIME.split(':'))
     exh, exm = map(int, EXIT_TIME.split(':'))
     entry_trigger = CronTrigger(hour=eth, minute=etm, timezone=ET_ZONE)
-    exit_trigger  = CronTrigger(hour=exh, minute=exm, timezone=ET_ZONE)
-    monitor_trigger = IntervalTrigger(seconds=60,
-                                      start_date=datetime.combine(date.today(), dtime(hour=eth,minute=etm, tzinfo=ET_ZONE)) + timedelta(minutes=1),
-                                      end_date=datetime.combine(date.today(), dtime(hour=exh,minute=exm, tzinfo=ET_ZONE)),
-                                      timezone=ET_ZONE)
+    exit_trigger = CronTrigger(hour=exh, minute=exm, timezone=ET_ZONE)
+    monitor_trigger = IntervalTrigger(
+        seconds=60,
+        start_date=datetime.combine(date.today(), dtime(hour=eth, minute=etm, tzinfo=ET_ZONE)) + timedelta(minutes=1),
+        end_date=datetime.combine(date.today(), dtime(hour=exh, minute=exm, tzinfo=ET_ZONE)),
+    )
+
+    # schedule heartbeat until market open
+    entry_dt = datetime.combine(date.today(), dtime(hour=eth, minute=etm, tzinfo=ET_ZONE))
+    now_dt = datetime.now(ET_ZONE)
+    if now_dt < entry_dt:
+        heartbeat_trigger = IntervalTrigger(
+            seconds=3600,
+            start_date=now_dt,
+            end_date=entry_dt,
+            timezone=ET_ZONE
+        )
+        scheduler.add_job(heartbeat_job, trigger=heartbeat_trigger, id='heartbeat')
+        logger.info(f"Scheduled heartbeat every hour until market open at {ENTRY_TIME} ET")
+
+    # schedule trading lifecycle jobs
     scheduler.add_job(entry_job, trigger=entry_trigger, id='entry')
     scheduler.add_job(monitor_job, trigger=monitor_trigger, id='monitor')
     scheduler.add_job(exit_job, trigger=exit_trigger, id='exit')
+    # schedule one-time reminder at 4 PM Pacific today
+    pacific = pytz.timezone('US/Pacific')
+    now_pac = datetime.now(pacific)
+    run_date = now_pac.replace(hour=16, minute=0, second=0, microsecond=0)
+    if run_date > now_pac:
+        scheduler.add_job(remind_job,
+                          trigger='date',
+                          run_date=run_date,
+                          timezone=pacific,
+                          id='reminder')
+    else:
+        logger.info("4 PM Pacific time already passed; skipping today's reminder")
 
 
 def main():

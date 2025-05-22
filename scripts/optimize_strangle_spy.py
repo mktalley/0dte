@@ -26,6 +26,10 @@ call_long_deltas  = [0.15, 0.20, 0.25]
 # Risk-free rate
 RISK_FREE_RATE = 0.01
 
+# Intraday stop-loss and profit-take (as fraction of credit)
+STOP_LOSS_PERCENTAGE = 0.5
+PROFIT_TAKE_PERCENTAGE = 0.75
+
 # Black-Scholes helper
 
 def bs_d1(S, K, r, T, sigma):
@@ -74,7 +78,7 @@ def strike_from_delta(delta_func, S, r, T, sigma, target_delta):
         return None
 
 # Backtest for a given parameter set
-def backtest_strangle(sp_sd, sp_ld, sc_sd, sc_ld, df_spy, df_vix):
+def backtest_strangle(sp_sd, sp_ld, sc_sd, sc_ld, df_spy, df_vix, daily=False):
     # sp_sd: short put delta abs (positive number), use -sp_sd
     # sp_ld: long put delta abs
     # sc_sd: short call delta abs
@@ -85,10 +89,14 @@ def backtest_strangle(sp_sd, sp_ld, sc_sd, sc_ld, df_spy, df_vix):
     trade_dates = []
     # Align dates
     dates = sorted(set(df_spy.index).intersection(df_vix.index))
-    # Only Fridays
-    dates = [d for d in dates if d.weekday() == 4]
+    if not daily:
+        # Only weekly expirations (Fridays)
+        dates = [d for d in dates if d.weekday() == 4]
+    # else: daily expirations (every trading day)
     for dt in dates:
         S_open = df_spy.at[dt, 'Open']
+        high = df_spy.at[dt, 'High']
+        low = df_spy.at[dt, 'Low']
         S_close = df_spy.at[dt, 'Close']
         sigma = df_vix.at[dt, 'Close'] / 100.0
         # Compute strikes
@@ -98,24 +106,138 @@ def backtest_strangle(sp_sd, sp_ld, sc_sd, sc_ld, df_spy, df_vix):
         K_cl = strike_from_delta(call_delta, S_open, r, T, sigma, sc_ld)
         if None in (K_ps, K_pl, K_cs, K_cl):
             continue
-        # Entry prices
+        # Entry prices per share
         pu_short = bs_put_price(S_open, K_ps, r, T, sigma)
         pu_long  = bs_put_price(S_open, K_pl, r, T, sigma)
         ca_short = bs_call_price(S_open, K_cs, r, T, sigma)
         ca_long  = bs_call_price(S_open, K_cl, r, T, sigma)
-        credit = (pu_short - pu_long) + (ca_short - ca_long)
-        # Exit cost: intrinsic at close
-        exit_put  = max(K_ps - S_close, 0) - max(K_pl - S_close, 0)
-        exit_call = max(S_close - K_cs, 0) - max(S_close - K_cl, 0)
-        exit_cost = exit_put + exit_call
-        pnl = (credit - exit_cost) * 100  # per 1 contract per leg
+        credit_share = (pu_short - pu_long) + (ca_short - ca_long)
+        # Intraday thresholds based on credit
+        sl_pct = STOP_LOSS_PERCENTAGE
+        profit_pct = PROFIT_TAKE_PERCENTAGE
+        # P/L for low (put leg heavy)
+        exit_put_low  = max(K_ps - low, 0) - max(K_pl - low, 0)
+        exit_call_low = max(low - K_cs, 0) - max(low - K_cl, 0)
+        exit_cost_low = exit_put_low + exit_call_low
+        pnl_low_share = credit_share - exit_cost_low
+        # P/L for high (call leg heavy)
+        exit_put_high  = max(K_ps - high, 0) - max(K_pl - high, 0)
+        exit_call_high = max(high - K_cs, 0) - max(high - K_cl, 0)
+        exit_cost_high = exit_put_high + exit_call_high
+        pnl_high_share = credit_share - exit_cost_high
+        # Decide exit
+        if pnl_low_share <= -sl_pct * credit_share:
+            exit_cost = exit_cost_low
+            exit_type = 'sl'
+        elif pnl_high_share >= profit_pct * credit_share:
+            exit_cost = exit_cost_high
+            exit_type = 'tp'
+        else:
+            exit_put_eod  = max(K_ps - S_close, 0) - max(K_pl - S_close, 0)
+            exit_call_eod = max(S_close - K_cs, 0) - max(S_close - K_cl, 0)
+            exit_cost = exit_put_eod + exit_call_eod
+            exit_type = 'eod'
+        # PnL per contract
+        pnl = (credit_share - exit_cost) * 100
         pnls.append(pnl)
         trade_dates.append(dt)
+        # (You could also collect exit_type per date if desired)
     total = sum(pnls)
     wins = sum(1 for x in pnls if x > 0)
     count = len(pnls)
     win_rate = wins / count * 100 if count else 0.0
     return total, count, win_rate
+
+
+def backtest_dynamic_strangle(sp_sd, sp_ld, sc_sd, sc_ld,
+                              df_spy, df_vix,
+                              drop_pct=0.005, rise_pct=0.003):
+    """
+    Dynamic intraday leg management: start with a short strangle, remove/add legs based on intraday price moves.
+    sp_sd, sp_ld, sc_sd, sc_ld: entry delta magnitudes for put and call legs.
+    drop_pct: drop threshold from open to remove call/add put (e.g., 0.005 for 0.5%).
+    rise_pct: rise threshold from open to remove put/add call (e.g., 0.003 for 0.3%).
+    """
+    r = RISK_FREE_RATE
+    T = 1/252
+    pnls = []
+    trade_dates = []
+    # Use all available dates (daily expirations)
+    dates = sorted(set(df_spy.index).intersection(df_vix.index))
+    for dt in dates:
+        S_open = df_spy.at[dt, 'Open']
+        high = df_spy.at[dt, 'High']
+        low = df_spy.at[dt, 'Low']
+        S_close = df_spy.at[dt, 'Close']
+        sigma = df_vix.at[dt, 'Close'] / 100.0
+        # Compute entry strikes
+        K_ps = strike_from_delta(put_delta, S_open, r, T, sigma, -sp_sd)
+        K_pl = strike_from_delta(put_delta, S_open, r, T, sigma, -sp_ld)
+        K_cs = strike_from_delta(call_delta, S_open, r, T, sigma, sc_sd)
+        K_cl = strike_from_delta(call_delta, S_open, r, T, sigma, sc_ld)
+        if None in (K_ps, K_pl, K_cs, K_cl):
+            continue
+        # Entry option prices per share
+        pu_short = bs_put_price(S_open, K_ps, r, T, sigma)
+        pu_long  = bs_put_price(S_open, K_pl, r, T, sigma)
+        ca_short = bs_call_price(S_open, K_cs, r, T, sigma)
+        ca_long  = bs_call_price(S_open, K_cl, r, T, sigma)
+        # Credit per leg
+        credit_put = pu_short - pu_long
+        credit_call = ca_short - ca_long
+        # State for leg adjustments
+        removed_call = False
+        removed_put = False
+        add_put = False
+        add_call = False
+        pnl_share = 0.0
+        # Trigger: downside move
+        if low <= S_open * (1 - drop_pct):
+            # Close call leg at intraday low
+            exit_call_low = (max(low - K_cs, 0) - max(low - K_cl, 0))
+            pnl_share += (credit_call - exit_call_low)
+            removed_call = True
+            # Add extra put spread at intraday low
+            exit_put_low = (max(K_ps - low, 0) - max(K_pl - low, 0))
+            pu_short2 = bs_put_price(low, K_ps, r, T, sigma)
+            pu_long2  = bs_put_price(low, K_pl, r, T, sigma)
+            credit_put2 = pu_short2 - pu_long2
+            add_put = True
+        # Trigger: upside move
+        elif high >= S_open * (1 + rise_pct):
+            # Close put leg at intraday high
+            exit_put_high = (max(K_ps - high, 0) - max(K_pl - high, 0))
+            pnl_share += (credit_put - exit_put_high)
+            removed_put = True
+            # Add extra call spread at intraday high
+            ca_short2 = bs_call_price(high, K_cs, r, T, sigma)
+            ca_long2  = bs_call_price(high, K_cl, r, T, sigma)
+            credit_call2 = ca_short2 - ca_long2
+            add_call = True
+        # Exit any remaining original legs at close
+        if not removed_put:
+            exit_put_close = (max(K_ps - S_close, 0) - max(K_pl - S_close, 0))
+            pnl_share += (credit_put - exit_put_close)
+        if not removed_call:
+            exit_call_close = (max(S_close - K_cs, 0) - max(S_close - K_cl, 0))
+            pnl_share += (credit_call - exit_call_close)
+        # Exit any added legs at close
+        if add_put:
+            exit_put_close = (max(K_ps - S_close, 0) - max(K_pl - S_close, 0))
+            pnl_share += (credit_put2 - exit_put_close)
+        if add_call:
+            exit_call_close = (max(S_close - K_cs, 0) - max(S_close - K_cl, 0))
+            pnl_share += (credit_call2 - exit_call_close)
+        # PnL per contract (100 shares)
+        pnls.append(pnl_share * 100)
+        trade_dates.append(dt)
+    total = sum(pnls)
+    wins  = sum(1 for x in pnls if x > 0)
+    count = len(pnls)
+    win_rate = wins / count * 100 if count else 0.0
+    return total, count, win_rate
+
+
 
 if __name__ == '__main__':
     # Load data
