@@ -253,10 +253,10 @@ def trade_strangle(symbol, today):
         ps = pick(put_chain, K_ps); pl = pick(put_chain, K_pl)
         cs = pick(call_chain, K_cs); cl = pick(call_chain, K_cl)
         legs = [
-            OptionLegRequest(symbol=ps.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.OPEN),
-            OptionLegRequest(symbol=pl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.OPEN),
-            OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.OPEN),
-            OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.OPEN),
+            OptionLegRequest(symbol=ps.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
+            OptionLegRequest(symbol=pl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
+            OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
+            OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
         order = MarketOrderRequest(qty=CONTRACTS_PER_DAY, time_in_force=TimeInForce.DAY,
                                   order_class=OrderClass.MLEG, type=OrderType.MARKET,
