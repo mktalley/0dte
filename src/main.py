@@ -198,6 +198,10 @@ os.makedirs("logs", exist_ok=True)
 # Configure root logger
 logger = logging.getLogger("0dte")
 logger.setLevel(logging.INFO)
+# Convenience wrapper for simple logging calls
+def log(message: str, **kwargs):
+    logger.info(message, **kwargs)
+
 # Console handler (plain text with timestamp)
 console_handler = logging.StreamHandler()
 console_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
