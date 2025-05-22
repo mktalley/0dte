@@ -19,7 +19,7 @@ from alpaca.data.historical.stock import StockHistoricalDataClient, StockLatestT
 from alpaca.data.requests import OptionLatestQuoteRequest
 import json
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 
 import functools
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -28,6 +28,8 @@ from pydantic_settings import BaseSettings
 from pydantic import Field, ValidationError
 from typing import Optional
 import sys
+import schedule
+import subprocess
 
 class Settings(BaseSettings):
     email_host: str = Field("localhost", env="EMAIL_HOST")
@@ -201,8 +203,12 @@ console_handler = logging.StreamHandler()
 console_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
-# Rotating file handler
-file_handler = RotatingFileHandler("logs/0dte.log", maxBytes=10*1024*1024, backupCount=5)
+# Timed rotating file handler at midnight PST
+file_handler = TimedRotatingFileHandler("logs/0dte.log", when="midnight", interval=1, backupCount=30)
+# Suffix for rotated logs: date pattern YYYY-MM-DD
+file_handler.suffix = "%Y-%m-%d"
+# Rename rotated files to logs/YYYY-MM-DD.log
+file_handler.namer = lambda default_name: default_name.replace("logs/0dte.log.", "logs/") + ".log"
 file_handler.setFormatter(JsonLogFormatter())
 logger.addHandler(file_handler)
 
@@ -279,6 +285,16 @@ os.makedirs("logs", exist_ok=True)
 # === POSITION MANAGEMENT LOG FILES ===
 OPEN_POS_LOG = "logs/open_positions.csv"
 EXIT_LOG = "logs/exit_log.csv"
+# PnL log directory; file rotates daily
+PNL_LOG_DIR = "logs"
+# Ensure daily PnL log file exists with header at startup
+today_str = date.today().isoformat()
+daily_pnl_file = os.path.join(PNL_LOG_DIR, f"pnl_log_{today_str}.csv")
+if not os.path.exists(daily_pnl_file):
+    with open(daily_pnl_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "symbol", "side", "qty", "entry", "mid", "pnl_share", "pnl", "pnl_pct"])
+# === POSITION MANAGEMENT ===
 
 # === POSITION MANAGEMENT ===
 def fetch_positions():
@@ -557,9 +573,29 @@ def trade(symbol, spot):
 # === MAIN LOOP ===
 
 def main_loop():
+    # Initialize daily PnL log file with header
+    today_str = datetime.now().date().isoformat()
+    pnl_log_file = os.path.join(PNL_LOG_DIR, f"pnl_log_{today_str}.csv")
+    if not os.path.exists(pnl_log_file):
+        with open(pnl_log_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "symbol", "side", "qty", "entry", "mid", "pnl_share", "pnl", "pnl_pct"])
+
+    # Main loop entry point
+    # Schedule end-of-day report at 16:05 ET
+    def job_send_eod():
+        log("📈 Triggering EOD report")
+        try:
+            subprocess.run(["python3", "scripts/send_eod_report.py"], check=True)
+        except Exception as e:
+            log(f"Error running EOD report: {e}")
+
+    schedule.every().day.at("16:05").do(job_send_eod)
+
     log("🟢 Bot started")
     TICKERS = load_tickers()
     while True:
+        schedule.run_pending()
         if is_market_open():
             prices = get_all_underlying_prices(TICKERS)
             # === POSITION MANAGEMENT ===
@@ -586,6 +622,25 @@ def main_loop():
                 pnl_pct = None
                 if p.usd and p.usd.unrealized_plpc is not None:
                     pnl_pct = p.usd.unrealized_plpc
+                # Log PnL snapshot to daily rotated file
+                date_str = datetime.now().date().isoformat()
+                pnl_log_file = os.path.join(PNL_LOG_DIR, f"pnl_log_{date_str}.csv")
+                write_header = not os.path.exists(pnl_log_file)
+                with open(pnl_log_file, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    if write_header:
+                        writer.writerow(["timestamp", "symbol", "side", "qty", "entry", "mid", "pnl_share", "pnl", "pnl_pct"])
+                    writer.writerow([
+                        datetime.now().isoformat(),
+                        p.symbol,
+                        p.side.value if hasattr(p.side, 'value') else p.side,
+                        qty,
+                        entry,
+                        mid,
+                        pnl_share,
+                        pnl,
+                        pnl_pct,
+                    ])
                 # Check stop-loss or profit-take
                 # Determine applicable profit-take threshold (SPY override)
                 if p.symbol.startswith("SPY"):
@@ -624,20 +679,34 @@ def main_loop():
 
 if __name__ == "__main__":
     import argparse
-    from pathlib import Path
-    from datetime import date, timedelta
+    import sys
+    import os
     import runpy
-    parser = argparse.ArgumentParser(description="0DTE Bot with optional backtest")
-    parser.add_argument('--backtest', action='store_true', help='Run SPY backtest for the past year')
-    parser.add_argument('--start', help='Start date YYYY-MM-DD')
-    parser.add_argument('--end', help='End date YYYY-MM-DD')
-    args = parser.parse_args()
-    if args.backtest:
-        # Delegate to backtest script
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'run_backtest_spy_last_year.py'))
-        runpy.run_path(script_path, run_name='__main__')
-    else:
-        # Start main_loop now; main_loop will sleep 15 minutes until market open (09:30 ET)
-        log("✅ Starting 0DTE bot now; it will sleep every 15 minutes until market open at 09:30 ET if closed.")
-        main_loop()
 
+    parser = argparse.ArgumentParser(description="0DTE Bot: backtest and trading for put credit and strangle strategies")
+    parser.add_argument('--backtest', action='store_true', help='Run 0DTE backtest for the past year')
+    parser.add_argument('--strangle', action='store_true', help='Use strangle strategy (requires --backtest for backtesting)')
+    parser.add_argument('--start', help='Start date YYYY-MM-DD (optional for backtests)')
+    parser.add_argument('--end', help='End date YYYY-MM-DD (optional for backtests)')
+    args = parser.parse_args()
+
+    if args.backtest:
+        # Backtest mode
+        if args.strangle:
+            script = 'run_backtest_strangle_spy_last_year.py'
+        else:
+            script = 'run_backtest_spy_last_year.py'
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', script))
+        # Reset sys.argv for the backtest script to avoid passing main.py args
+        sys.argv = [script_path]
+        runpy.run_path(script_path, run_name='__main__')
+        sys.exit(0)
+    elif args.strangle:
+        # Live strangle trading bot
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'trading_bot.py'))
+        runpy.run_path(script_path, run_name='__main__')
+        sys.exit(0)
+    else:
+        # Live put credit spread bot
+        log("✅ Starting live 0DTE put credit spread bot now; it will sleep every 15 minutes until market open at 09:30 ET if closed.")
+        main_loop()
