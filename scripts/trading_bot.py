@@ -250,8 +250,15 @@ def trade_strangle(symbol, today):
     chain,
     key=lambda snap: abs((snap.greeks.delta if getattr(snap, 'greeks', None) and snap.greeks.delta is not None else 0.0) - target_delta)
 )
-        ps = pick(put_chain, K_ps); pl = pick(put_chain, K_pl)
-        cs = pick(call_chain, K_cs); cl = pick(call_chain, K_cl)
+        # pick short put, then exclude it before picking the long put
+        ps = pick(put_chain, K_ps)
+        puts_remaining = [opt for opt in put_chain if opt.symbol != ps.symbol]
+        pl = pick(puts_remaining, K_pl)
+
+        # pick short call, then exclude it before picking the long call
+        cs = pick(call_chain, K_cs)
+        calls_remaining = [opt for opt in call_chain if opt.symbol != cs.symbol]
+        cl = pick(calls_remaining, K_cl)
         legs = [
             OptionLegRequest(symbol=ps.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=pl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
