@@ -49,7 +49,7 @@ from alpaca.data.requests import OptionChainRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, OptionLegRequest
 from alpaca.trading.enums import (
-    ContractType, TimeInForce, OrderClass,
+    AssetClass, ContractType, TimeInForce, OrderClass,
     OrderSide, PositionIntent, OrderType
 )
 
@@ -230,7 +230,8 @@ def trade_strangle(symbol, today):
         K_cs = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scd)
         K_cl = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scl)
         # chains
-        exp = today
+        # determine expiration as this week’s Friday (0=Mon, 4=Fri)
+        exp = today + timedelta(days=(4 - today.weekday()) % 7)
         # fetch option chains
         raw_put_chain = data_client.get_option_chain(
             OptionChainRequest(underlying_symbol=symbol, expiration_date=exp, type=ContractType.PUT)
@@ -265,7 +266,7 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
-        order = MarketOrderRequest(qty=CONTRACTS_PER_DAY, time_in_force=TimeInForce.DAY,
+        order = MarketOrderRequest(qty=1, time_in_force=TimeInForce.DAY,
                                   order_class=OrderClass.MLEG, type=OrderType.MARKET,
                                   legs=legs)
         resp = trade_client.submit_order(order)
@@ -279,8 +280,24 @@ def trade_strangle(symbol, today):
 def entry_job():
     today = date.today()
     logger.info(f"=== ENTRY JOB @ {datetime.now(ET_ZONE)} ===")
-    for sym in SYMBOLS:
-        trade_strangle(sym, today)
+    # Skip entry if there are already open option positions for the symbols
+    try:
+        positions = trade_client.get_all_positions()
+        existing_underlyings = set()
+        for p in positions:
+            if p.asset_class == AssetClass.US_OPTION:
+                # underlying is the first 3-4 chars of the symbol (e.g., SPY)
+                for sym in SYMBOLS:
+                    if p.symbol.startswith(sym):
+                        existing_underlyings.add(sym)
+        for sym in SYMBOLS:
+            if sym in existing_underlyings:
+                logger.info(f"{sym}: already has open option positions; skipping entry")
+            else:
+                trade_strangle(sym, today)
+    except Exception as e:
+        logger.error(f"Entry-job load positions error: {e}")
+
 
 
 def monitor_job():
@@ -294,13 +311,15 @@ def monitor_job():
 
     try:
         positions = trade_client.get_all_positions()
+        logger.info(f"DEBUG MONITOR: got {len(positions)} positions: {[p.symbol for p in positions]}")
         total_pl = 0.0
         for pos in positions:
-            if pos.asset_class == 'option' and pos.symbol.split('_')[0] in SYMBOLS:
+            # only include option positions for our configured symbols
+            if any(pos.symbol.startswith(sym) for sym in SYMBOLS):
                 pl = float(pos.unrealized_pl)
                 total_pl += pl
-                logger.info(f"{pos.symbol}: qty={pos.qty}, P/L={pl:.2f}")
-        logger.info(f"Total P/L across positions: {total_pl:.2f}")
+                logger.info(f"{pos.symbol}: qty={pos.qty}, P/L={pl:.2f} (Δpt={PROFIT_TARGET - pl:.2f}, Δsl={pl - STOP_LOSS:.2f})")
+        logger.info(f"Total P/L across positions: {total_pl:.2f} (to PT={PROFIT_TARGET - total_pl:.2f}, to SL={total_pl - STOP_LOSS:.2f})")
         if total_pl >= PROFIT_TARGET or total_pl <= STOP_LOSS:
             logger.info(f"Threshold hit (P/L={total_pl:.2f}), early exit: closing positions and re-entering.")
             try:
