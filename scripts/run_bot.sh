@@ -7,6 +7,11 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 export TZ="America/Los_Angeles"  # Ensure timestamps use Pacific Time
 cd "$ROOT_DIR"
 
+# Auto-install Python dependencies (requirements.txt)
+mkdir -p logs
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Installing Python dependencies" >> logs/setup.log
+python3 -m pip install -r requirements.txt --quiet
+
 LOG_DIR="logs"
 
 while true; do
@@ -22,7 +27,7 @@ while true; do
   tomorrow=$(date -d 'tomorrow 00:00' '+%s')
   duration=$((tomorrow - now))
   # Run the bot until midnight PST (or until it exits)
-  timeout "${duration}s" python3 -u "$ROOT_DIR/src/main.py" >> "$LOG_FILE" 2>&1
+  timeout "${duration}s" python3 -u "$ROOT_DIR/scripts/trading_bot.py" >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
   if [ $EXIT_CODE -eq 124 ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Midnight PST reached; rotating log file" >> "$LOG_FILE"

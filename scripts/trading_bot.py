@@ -119,22 +119,31 @@ logger.addHandler(handler)
 # Prevent log messages from propagating to the root logger (avoid duplicates)
 logger.propagate = False
 
+# Also route log messages to stdout so the wrapper captures them as a heartbeat
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
 
 # Config
 # Account risk sizing
 ACCOUNT_CAPITAL       = float(os.getenv('ACCOUNT_CAPITAL', '38000'))  # total cash available
+# Daily risk sizing
 DAILY_RISK_PCT        = float(os.getenv('DAILY_RISK_PCT', '0.05'))       # percent of capital to risk per day (default 5%)
+# Profit/Stop thresholds
+PROFIT_TAKE_PCT       = float(os.getenv('PROFIT_TAKE_PERCENTAGE', '0.05'))  # profit target as fraction of capital (default 5%)
+STOP_LOSS_PCT         = float(os.getenv('STOP_LOSS_PERCENTAGE', '0.05'))    # stop loss as fraction of capital (default 5%)
 RISK_PER_CONTRACT     = float(os.getenv('RISK_PER_CONTRACT', '100'))    # worst-case loss per contract
 # Compute daily risk budget and contract sizing
 daily_risk            = ACCOUNT_CAPITAL * DAILY_RISK_PCT
 CONTRACTS_PER_DAY     = max(1, int(daily_risk / RISK_PER_CONTRACT))
-# Override profit/stop based on daily budget
-PROFIT_TARGET         = daily_risk
-STOP_LOSS             = -daily_risk
+# Risk-based profit and stop thresholds
+PROFIT_TARGET         = daily_risk * PROFIT_TAKE_PCT  # profit target based on daily risk
+STOP_LOSS             = -daily_risk * STOP_LOSS_PCT    # stop loss based on daily risk
 
 # Base config from env (retained for backward compatibility)
 ET_ZONE = pytz.timezone('America/New_York')
-SYMBOLS = [s.strip().upper() for s in os.getenv('SYMBOLS', 'SPY,SPX,XSP').split(',')]
+SYMBOLS = [s.strip().upper() for s in os.getenv('SYMBOLS', 'SPY,QQQ,IWM').split(',')]
 ENTRY_TIME = os.getenv('ENTRY_TIME', '09:35')  # ET
 EXIT_TIME = os.getenv('EXIT_TIME', '15:45')    # ET
 
@@ -280,7 +289,28 @@ def trade_strangle(symbol, today):
 def entry_job():
     today = date.today()
     logger.info(f"=== ENTRY JOB @ {datetime.now(ET_ZONE)} ===")
+    # Close any leftover positions at start of day
+    try:
+        positions = trade_client.get_all_positions()
+        if positions:
+            logger.info(f"Entry-job: clearing existing positions before new strangle: {[p.symbol for p in positions]}")
+            trade_client.close_all_positions()
+            # Wait until positions are truly cleared, up to 30s
+            start_time = time.time()
+            while True:
+                positions = trade_client.get_all_positions()
+                if not positions:
+                    elapsed = time.time() - start_time
+                    logger.info(f"All existing positions cleared in {elapsed:.1f}s")
+                    break
+                if time.time() - start_time > 30:
+                    logger.warning(f"Positions still open after 30s: {[p.symbol for p in positions]}")
+                    break
+                time.sleep(1)
+    except Exception as e:
+        logger.error(f"Entry-job pre-clear error: {e}")
     # Skip entry if there are already open option positions for the symbols
+
     try:
         positions = trade_client.get_all_positions()
         existing_underlyings = set()
