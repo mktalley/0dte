@@ -58,9 +58,9 @@ load_dotenv()
 
 # Number of strangle contracts per symbol (must be integer)
 CONTRACT_QTY = int(os.getenv('CONTRACT_QTY', '1'))
+# Maximum global dollar budget across all symbols per day
+GLOBAL_BUDGET = float(os.getenv('GLOBAL_BUDGET', '9000'))  # e.g. $9k total budget across all symbols
 # Logging
-# Maximum dollar budget per 4-leg strangle
-MAX_ALLOCATION_PER_STRANGLE = float(os.getenv('MAX_ALLOCATION_PER_STRANGLE', '5000'))
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 logger = logging.getLogger('trading_bot')
 logger.setLevel(LOG_LEVEL)
@@ -149,6 +149,9 @@ STOP_LOSS             = -daily_risk * STOP_LOSS_PCT    # stop loss based on dail
 ET_ZONE = pytz.timezone('America/New_York')
 SYMBOLS = [s.strip().upper() for s in os.getenv('SYMBOLS', 'SPY,QQQ,IWM').split(',')]
 ENTRY_TIME = os.getenv('ENTRY_TIME', '09:35')  # ET
+# Per-symbol budget derived from global budget
+PER_SYMBOL_BUDGET = GLOBAL_BUDGET / len(SYMBOLS)  # e.g. $3000 per symbol if GLOBAL_BUDGET=9000 and 3 symbols
+
 EXIT_TIME = os.getenv('EXIT_TIME', '15:45')    # ET
 
 
@@ -243,15 +246,15 @@ def trade_strangle(symbol, today):
         K_cs = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scd)
         K_cl = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scl)
         # chains
-        # position sizing by budget and env cap
+        # position sizing by per-symbol budget derived from global budget and env cap
         width_put = K_pl - K_ps
         width_call = K_cl - K_cs
         margin_per_contract = 100 * max(width_put, width_call)
-        budget_qty = int(MAX_ALLOCATION_PER_STRANGLE // margin_per_contract)
-        qty_budget = max(1, budget_qty)
+        # compute max contracts by per-symbol budget
+        budget_qty = max(1, int(PER_SYMBOL_BUDGET // margin_per_contract))
         # cap by configured max contracts from CONTRACT_QTY env var
-        qty = min(CONTRACT_QTY, qty_budget)
-        logger.info(f"{symbol}: sizing {qty} contracts (env max={CONTRACT_QTY}, budget max={qty_budget}) based on ${MAX_ALLOCATION_PER_STRANGLE} budget and ${margin_per_contract:.2f} per contract")
+        qty = min(CONTRACT_QTY, budget_qty)
+        logger.info(f"{symbol}: sizing {qty} contracts (env max={CONTRACT_QTY}, budget max={budget_qty}) based on ${PER_SYMBOL_BUDGET:.2f} per symbol budget and ${margin_per_contract:.2f} per contract")
         # determine expiration as this week’s Friday (0=Mon, 4=Fri)
         exp = today + timedelta(days=(4 - today.weekday()) % 7)
         # fetch option chains
