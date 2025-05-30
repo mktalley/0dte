@@ -56,6 +56,8 @@ from alpaca.trading.enums import (
 # Load environment
 load_dotenv()
 
+# Number of strangle contracts per symbol (must be integer)
+CONTRACT_QTY = int(os.getenv('CONTRACT_QTY', '1'))
 # Logging
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 logger = logging.getLogger('trading_bot')
@@ -275,7 +277,7 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
-        order = MarketOrderRequest(qty=1, time_in_force=TimeInForce.DAY,
+        order = MarketOrderRequest(qty=CONTRACT_QTY, time_in_force=TimeInForce.DAY,
                                   order_class=OrderClass.MLEG, type=OrderType.MARKET,
                                   legs=legs)
         resp = trade_client.submit_order(order)
