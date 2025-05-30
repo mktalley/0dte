@@ -59,6 +59,8 @@ load_dotenv()
 # Number of strangle contracts per symbol (must be integer)
 CONTRACT_QTY = int(os.getenv('CONTRACT_QTY', '1'))
 # Logging
+# Maximum dollar budget per 4-leg strangle
+MAX_ALLOCATION_PER_STRANGLE = float(os.getenv('MAX_ALLOCATION_PER_STRANGLE', '5000'))
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 logger = logging.getLogger('trading_bot')
 logger.setLevel(LOG_LEVEL)
@@ -241,6 +243,15 @@ def trade_strangle(symbol, today):
         K_cs = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scd)
         K_cl = strike_from_delta(call_delta, S, RISK_FREE_RATE, T, sigma, scl)
         # chains
+        # position sizing by budget and env cap
+        width_put = K_pl - K_ps
+        width_call = K_cl - K_cs
+        margin_per_contract = 100 * max(width_put, width_call)
+        budget_qty = int(MAX_ALLOCATION_PER_STRANGLE // margin_per_contract)
+        qty_budget = max(1, budget_qty)
+        # cap by configured max contracts from CONTRACT_QTY env var
+        qty = min(CONTRACT_QTY, qty_budget)
+        logger.info(f"{symbol}: sizing {qty} contracts (env max={CONTRACT_QTY}, budget max={qty_budget}) based on ${MAX_ALLOCATION_PER_STRANGLE} budget and ${margin_per_contract:.2f} per contract")
         # determine expiration as this week’s Friday (0=Mon, 4=Fri)
         exp = today + timedelta(days=(4 - today.weekday()) % 7)
         # fetch option chains
@@ -277,7 +288,7 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
-        order = MarketOrderRequest(qty=CONTRACT_QTY, time_in_force=TimeInForce.DAY,
+        order = MarketOrderRequest(qty=qty, time_in_force=TimeInForce.DAY,
                                   order_class=OrderClass.MLEG, type=OrderType.MARKET,
                                   legs=legs)
         resp = trade_client.submit_order(order)
