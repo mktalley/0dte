@@ -144,6 +144,8 @@ def main():
     ]
 
     order = MarketOrderRequest(
+        symbol=symbol,
+        side=OrderSide.SELL,
         qty=1,
         time_in_force=TimeInForce.DAY,
         order_class=OrderClass.MLEG,

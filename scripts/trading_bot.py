@@ -291,12 +291,33 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
-        order = MarketOrderRequest(qty=qty, time_in_force=TimeInForce.DAY,
-                                  order_class=OrderClass.MLEG, type=OrderType.MARKET,
-                                  legs=legs)
-        resp = trade_client.submit_order(order)
-        logger.info(f"{symbol}: entry order {resp.id}")
-        return resp.id
+        order = MarketOrderRequest(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            qty=qty,
+            time_in_force=TimeInForce.DAY,
+            order_class=OrderClass.MLEG,
+            type=OrderType.MARKET,
+            legs=legs
+        )
+        # submit with retry on 5xx errors
+        for attempt in range(1, 4):
+            try:
+                resp = trade_client.submit_order(order)
+                logger.info(f"{symbol}: entry order {resp.id}")
+                return resp.id
+            except Exception as e:
+                status = getattr(e, 'status_code', None) or getattr(e, 'status', None)
+                err_msg = ''
+                if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                    err_msg = e.response.text
+                logger.error(f"{symbol}: entry error on attempt {attempt}: {e} {err_msg}")
+                if status and 500 <= status < 600 and attempt < 3:
+                    logger.info(f"{symbol}: retrying order submit (attempt {attempt+1}/3) after 1s")
+                    time.sleep(1)
+                    continue
+                logger.error(f"{symbol}: order submit failed permanently after {attempt} attempts")
+                return None
     except Exception as e:
         logger.error(f"{symbol}: entry error: {e}")
         return None

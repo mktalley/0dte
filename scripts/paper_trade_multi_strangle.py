@@ -31,7 +31,7 @@ import yfinance as yf
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import brentq
-from scripts.fetch_spy_options import _parse_strike
+from fetch_spy_options import _parse_strike
 
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest
@@ -135,6 +135,8 @@ def trade_strangle(symbol, today, data_client, trade_client, dry_run=False):
     ]
 
     order = MarketOrderRequest(
+        symbol=symbol,
+        side=OrderSide.SELL,
         qty=1,
         time_in_force=TimeInForce.DAY,
         order_class=OrderClass.MLEG,
