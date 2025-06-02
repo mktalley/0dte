@@ -31,7 +31,10 @@ import yfinance as yf
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import brentq
-from fetch_spy_options import _parse_strike
+try:
+    from fetch_spy_options import _parse_strike
+except ImportError:
+    from scripts.fetch_spy_options import _parse_strike
 
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest
