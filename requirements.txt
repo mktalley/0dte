@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Runtime dependencies for 0DTE bot and backtesting
 numpy
 pandas
@@ -9,3 +10,15 @@ tenacity
 python-dotenv
 schedule
 watchdog
+=======
+aiohttp
+deprecation
+msgpack
+numpy>=1.18.0
+pandas>=1.0.0
+PyYAML
+requests>=2.25.0
+urllib3>=1.25.0
+websocket-client
+websockets
+>>>>>>> origin/main
