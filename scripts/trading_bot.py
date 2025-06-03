@@ -47,7 +47,7 @@ from scipy.optimize import brentq
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, OptionLegRequest
+from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
 from alpaca.trading.enums import (
     AssetClass, ContractType, TimeInForce, OrderClass,
     OrderSide, PositionIntent, OrderType
@@ -168,10 +168,11 @@ VOL_MAP = { 'SPY': '^VIX', 'SPX': '^VIX', 'XSP': '^VIX' }
 
 # Alpaca clients
 # Alpaca API credentials (supports two naming conventions)
-API_KEY    = os.getenv('APCA_API_KEY_ID') or os.getenv('ALPACA_API_KEY')
-API_SECRET = os.getenv('APCA_API_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY')
-# Optional Base URL (for paper or live)
-BASE_URL   = os.getenv('APCA_API_BASE_URL') or os.getenv('ALPACA_API_BASE_URL')
+# Alpaca API credentials for strangle bot (preferring STRANGLE_* variables)
+API_KEY    = os.getenv('STRANGLE_ALPACA_API_KEY') or os.getenv('ALPACA_API_KEY') or os.getenv('APCA_API_KEY_ID')
+API_SECRET = os.getenv('STRANGLE_ALPACA_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY') or os.getenv('APCA_API_SECRET_KEY')
+# Optional Base URL (for paper or live) with override for strangle bot
+BASE_URL   = os.getenv('STRANGLE_API_BASE_URL') or os.getenv('APCA_API_BASE_URL') or os.getenv('ALPACA_API_BASE_URL')
 if not all((API_KEY, API_SECRET)):
     logger.error('Missing Alpaca API key or secret in environment. Exiting.')
     sys.exit(1)
@@ -179,7 +180,8 @@ if not all((API_KEY, API_SECRET)):
 # Option historical data client (requires API key/secret)
 data_client = OptionHistoricalDataClient(API_KEY, API_SECRET)
 if BASE_URL:
-    trade_client = TradingClient(API_KEY, API_SECRET, paper=True, base_url=BASE_URL)
+    # Use url_override instead of unsupported base_url parameter
+    trade_client = TradingClient(API_KEY, API_SECRET, paper=True, url_override=BASE_URL)
 else:
     trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
@@ -291,14 +293,14 @@ def trade_strangle(symbol, today):
             OptionLegRequest(symbol=cs.symbol, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
             OptionLegRequest(symbol=cl.symbol, ratio_qty=1, side=OrderSide.BUY,  position_intent=PositionIntent.BUY_TO_OPEN),
         ]
-        order = MarketOrderRequest(
-            symbol=symbol,
-            side=OrderSide.SELL,
+        # Build a multi-leg limit order for a small credit floor (MLEG supports limit orders)
+        order = LimitOrderRequest(
             qty=qty,
             time_in_force=TimeInForce.DAY,
             order_class=OrderClass.MLEG,
-            type=OrderType.MARKET,
-            legs=legs
+            legs=legs,
+            # negative price for credit; -0.01 ensures fill at market credit
+            limit_price=-0.01
         )
         # submit with retry on 5xx errors
         for attempt in range(1, 4):

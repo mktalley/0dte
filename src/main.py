@@ -31,6 +31,8 @@ import sys
 import schedule
 import subprocess
 
+from pydantic import ConfigDict
+
 class Settings(BaseSettings):
     email_host: str = Field("localhost", env="EMAIL_HOST")
     email_port: int = Field(25, env="EMAIL_PORT")
@@ -54,9 +56,7 @@ class Settings(BaseSettings):
     max_total_delta_exposure: float = Field(200, env="MAX_TOTAL_DELTA_EXPOSURE")
     spy_min_credit_percentage: float = Field(0.10, env="SPY_MIN_CREDIT_PERCENTAGE")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     symbols: str = Field('SPY,SPX,XSP', env="SYMBOLS")  # Allow custom SYMBOLS from .env
 try:
@@ -300,8 +300,10 @@ risk_free_rate = 0.01
 
 # Default to paper trading
 PAPER = True
+# Override base URL for paper trading endpoint
+paper_api_base_url = os.getenv("ALPACA_API_BASE_URL", None) or "https://paper-api.alpaca.markets"
 # === CLIENTS ===
-trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
+trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER, url_override=paper_api_base_url)
 option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET)
 stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 
@@ -579,7 +581,7 @@ def trade(symbol, spot):
 
     try:
         order = LimitOrderRequest(
-            qty=1,
+            qty=num_contracts,
             limit_price=round(credit, 2),
             order_class=OrderClass.MLEG,
             time_in_force=TimeInForce.DAY,
