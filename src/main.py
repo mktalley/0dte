@@ -286,15 +286,15 @@ logger.addHandler(human_handler)
 
 logger.info("🚀 Log handlers initialized: JSON and human-readable (PST)")
 
-# === OVERRIDE FILTERS FOR WIDER SPREADS (Wider test) ===
-MIN_CREDIT_PERCENTAGE = settings.min_credit_percentage  # allow firmer credit on wider spreads
-OI_THRESHOLD = settings.oi_threshold                   # lower OI threshold to include deeper strikes
-SHORT_PUT_DELTA_RANGE = (-0.6, -0.4)  # deeper OTM for short leg
-LONG_PUT_DELTA_RANGE = (-0.4, -0.2)   # deeper OTM for long leg
+# === AGGRESSIVE FILTERS FOR HIGHER P&L ===
+MIN_CREDIT_PERCENTAGE = 0.10          # allow credit ≥10% of width
+OI_THRESHOLD = 50                     # include strikes with OI down to 50
+SHORT_PUT_DELTA_RANGE = (-0.7, -0.5)  # deeper OTM for short leg
+LONG_PUT_DELTA_RANGE = (-0.5, -0.3)   # deeper OTM for long leg
 STRIKE_RANGE = settings.strike_range  # ±30% from spot for strike scan
 
-# Scan every 5 minutes instead of 10 to catch more delta swings
-SCAN_INTERVAL = settings.scan_interval
+# Scan every 2 minutes (120s) instead of default to catch more delta swings
+SCAN_INTERVAL = 120
 risk_free_rate = 0.01
 
 
