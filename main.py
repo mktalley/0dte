@@ -11,19 +11,33 @@ from scipy.optimize import brentq
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import smtplib
+import re
+from types import SimpleNamespace
+# duplicate import removed (datetime already imported)
+
 from email.mime.text import MIMEText
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderClass, OrderType, TimeInForce, AssetStatus, ContractType
 from alpaca.trading.requests import GetOptionContractsRequest, OptionLegRequest, LimitOrderRequest, StopLossRequest, TakeProfitRequest
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient, StockLatestTradeRequest
-from alpaca.data.requests import OptionLatestQuoteRequest
+from alpaca.data.requests import OptionLatestQuoteRequest, OptionChainRequest
+from alpaca.data.enums import OptionsFeed
 
 # === CONFIGURATION ===
 load_dotenv()
-API_KEY = os.getenv("ALPACA_API_KEY")
-API_SECRET = os.getenv("ALPACA_SECRET_KEY")
+# PAPER mode for trading and data
 PAPER = True
+# Load API credentials based on mode
+if PAPER:
+    API_KEY = os.getenv("ALPACA_PAPER_API_KEY") or os.getenv("ALPACA_API_KEY")
+    API_SECRET = os.getenv("ALPACA_PAPER_SECRET_KEY") or os.getenv("ALPACA_SECRET_KEY")
+else:
+    API_KEY = os.getenv("ALPACA_API_KEY")
+    API_SECRET = os.getenv("ALPACA_SECRET_KEY")
+# Determine options market data feed based on environment
+OPTIONS_FEED = OptionsFeed.INDICATIVE if PAPER else OptionsFeed.OPRA
+
 capital_pool = 100000
 max_risk_per_trade = 1000
 STOP_LOSS_PERCENTAGE = 0.5
@@ -39,8 +53,8 @@ timezone = ZoneInfo("America/New_York")
 
 # === CLIENTS ===
 trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
-option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET)
-stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
+option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=PAPER)
+stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=PAPER)
 
 # === LOG FILES ===
 os.makedirs("logs", exist_ok=True)
@@ -123,6 +137,36 @@ def get_0dte_options(symbol):
     min_strike = str(spot * (1 - STRIKE_RANGE))
     max_strike = str(spot * (1 + STRIKE_RANGE))
     today = datetime.now(timezone).date()
+    if PAPER:
+        try:
+            chain = option_data_client.get_option_chain(
+                OptionChainRequest(
+                    underlying_symbol=symbol,
+                    feed=OPTIONS_FEED,
+                    type=ContractType.PUT,
+                    strike_price_gte=spot*(1-STRIKE_RANGE),
+                    strike_price_lte=spot*(1+STRIKE_RANGE),
+                    expiration_date=today,
+                )
+            )
+            contracts = []
+            for sym, snap in chain.items():
+                m = re.match(r'^([A-Z]+)(\d{6})([CP])(\d{8})$', sym)
+                if not m:
+                    continue
+                _, date_str, opt_type, strike_str = m.groups()
+                exp = datetime.strptime(date_str, '%y%m%d').date()
+                strike = int(strike_str) / 1000
+                contracts.append(SimpleNamespace(
+                    symbol=sym,
+                    expiration_date=exp,
+                    strike_price=str(strike),
+                    open_interest=OI_THRESHOLD*2,
+                ))
+            return contracts
+        except Exception as e:
+            log(f"❌ Failed to get 0DTE contracts via market data for {symbol}: {e}")
+            return []
     req = GetOptionContractsRequest(
         underlying_symbols=[symbol],
         strike_price_gte=min_strike,
@@ -154,7 +198,7 @@ def trade(symbol, spot):
     for opt in options:
         if not opt.open_interest or int(opt.open_interest) < OI_THRESHOLD:
             continue
-        quote = option_data_client.get_option_latest_quote(OptionLatestQuoteRequest(symbol_or_symbols=opt.symbol)).get(opt.symbol)
+        quote = option_data_client.get_option_latest_quote(OptionLatestQuoteRequest(symbol_or_symbols=opt.symbol, feed=OPTIONS_FEED)).get(opt.symbol)
         if not quote or not quote.bid_price or not quote.ask_price:
             continue
         price = (quote.bid_price + quote.ask_price) / 2
