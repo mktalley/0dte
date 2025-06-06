@@ -117,9 +117,6 @@ def get_all_underlying_prices(tickers):
         return {}
 
 def get_0dte_options(symbol):
-    if PAPER:
-        log(f"⚠️ Paper mode: skipping option contracts fetch for {symbol}")
-        return []
 
     spot = get_all_underlying_prices([symbol]).get(symbol)
     if not spot: return []
