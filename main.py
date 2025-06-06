@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, OrderClass, TimeInForce, AssetStatus, ContractType
-from alpaca.trading.requests import GetOptionContractsRequest, OptionLegRequest, LimitOrderRequest
+from alpaca.trading.enums import OrderSide, OrderClass, OrderType, TimeInForce, AssetStatus, ContractType
+from alpaca.trading.requests import GetOptionContractsRequest, OptionLegRequest, LimitOrderRequest, StopLossRequest, TakeProfitRequest
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient, StockLatestTradeRequest
 from alpaca.data.requests import OptionLatestQuoteRequest
@@ -33,7 +33,7 @@ OI_THRESHOLD = 500
 SHORT_PUT_DELTA_RANGE = (-0.45, -0.35)
 LONG_PUT_DELTA_RANGE = (-0.25, -0.15)
 STRIKE_RANGE = 0.1
-SCAN_INTERVAL = 600
+SCAN_INTERVAL = 120
 risk_free_rate = 0.01
 timezone = ZoneInfo("America/New_York")
 
@@ -45,6 +45,18 @@ stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 # === LOG FILES ===
 os.makedirs("logs", exist_ok=True)
 TRADE_LOG = "logs/trade_log.csv"
+OPEN_TRADES_FILE = "logs/open_trades.csv"
+
+
+# Initialize log files with headers if they don't exist
+if not os.path.exists(TRADE_LOG):
+    with open(TRADE_LOG, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp","symbol","short_strike","long_strike","credit","spread_width","take_profit_price","stop_loss_price","status"])
+if not os.path.exists(OPEN_TRADES_FILE):
+    with open(OPEN_TRADES_FILE, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["symbol","short_leg","long_leg","credit","width","take_profit_price","stop_loss_price","timestamp"])
 
 # === UTILITIES ===
 def log(msg):
@@ -105,6 +117,7 @@ def get_all_underlying_prices(tickers):
         return {}
 
 def get_0dte_options(symbol):
+
     spot = get_all_underlying_prices([symbol]).get(symbol)
     if not spot: return []
     min_strike = str(spot * (1 - STRIKE_RANGE))
@@ -119,17 +132,21 @@ def get_0dte_options(symbol):
         root_symbol=symbol,
         type=ContractType.PUT,
     )
-    contracts = trade_client.get_option_contracts(req).option_contracts
-    if len(contracts) < 5:
-        log(f"⚠️ Low contract count for {symbol}, retrying...")
-        time_module.sleep(2)
+    try:
         contracts = trade_client.get_option_contracts(req).option_contracts
-    return contracts
+        if len(contracts) < 5:
+            log(f"⚠️ Low contract count for {symbol}, retrying...")
+            time_module.sleep(2)
+            contracts = trade_client.get_option_contracts(req).option_contracts
+        return contracts
+    except Exception as e:
+        log(f"❌ Failed to get 0DTE contracts for {symbol}: {e}")
+        return []
 
-def log_trade(symbol, short_strike, long_strike, credit, spread_width, status):
+def log_trade(symbol, short_strike, long_strike, credit, spread_width, take_profit_price, stop_loss_price, status):
     with open(TRADE_LOG, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([datetime.now().isoformat(), symbol, short_strike, long_strike, credit, spread_width, status])
+        writer.writerow([datetime.now().isoformat(), symbol, short_strike, long_strike, credit, spread_width, take_profit_price, stop_loss_price, status])
 
 def trade(symbol, spot):
     options = get_0dte_options(symbol)
@@ -156,30 +173,42 @@ def trade(symbol, spot):
         return
     credit = short_put[1] - long_put[1]
     width = abs(float(short_put[0].strike_price) - float(long_put[0].strike_price))
+    take_profit_price = round(credit - credit * PROFIT_TAKE_PERCENTAGE, 2)
+    stop_loss_price = round(credit + (width - credit) * STOP_LOSS_PERCENTAGE, 2)
     min_credit = MIN_CREDIT_PERCENTAGE * width
     if credit < min_credit:
-        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "rejected")
+        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, take_profit_price, stop_loss_price, "rejected")
         return
     if width * 100 > max_risk_per_trade:
         log(f"[{symbol}] Skipped: spread too large (${width * 100:.2f})")
         return
     try:
         order = LimitOrderRequest(
+                symbol=symbol,
+                side=OrderSide.SELL,
+                type=OrderType.LIMIT,
             qty=1,
             limit_price=round(credit, 2),
-            order_class=OrderClass.MLEG,
+            order_class=OrderClass.BRACKET,
             time_in_force=TimeInForce.DAY,
             legs=[
                 OptionLegRequest(symbol=short_put[0].symbol, side=OrderSide.SELL, ratio_qty=1),
                 OptionLegRequest(symbol=long_put[0].symbol, side=OrderSide.BUY, ratio_qty=1),
             ],
+            take_profit=TakeProfitRequest(limit_price=take_profit_price),
+            stop_loss=StopLossRequest(stop_price=stop_loss_price, limit_price=stop_loss_price),
         )
         trade_client.submit_order(order)
-        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "submitted")
+        # Log to trade_log.csv
+        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, take_profit_price, stop_loss_price, "submitted")
+        # Log to open_trades.csv
+        with open(OPEN_TRADES_FILE, "a", newline="") as f_open:
+            writer_open = csv.writer(f_open)
+            writer_open.writerow([symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, take_profit_price, stop_loss_price, datetime.now().isoformat()])
         log(f"✅ {symbol} Spread placed: Credit ${credit:.2f}, Width ${width:.2f}")
     except Exception as e:
         log(f"❌ Order failed: {e}")
-        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, "submission_failed")
+        log_trade(symbol, short_put[0].strike_price, long_put[0].strike_price, credit, width, take_profit_price, stop_loss_price, "submission_failed")
 
 # === MAIN LOOP ===
 log("🟢 Bot started")
