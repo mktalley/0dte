@@ -131,12 +131,16 @@ def get_0dte_options(symbol):
         root_symbol=symbol,
         type=ContractType.PUT,
     )
-    contracts = trade_client.get_option_contracts(req).option_contracts
-    if len(contracts) < 5:
-        log(f"⚠️ Low contract count for {symbol}, retrying...")
-        time_module.sleep(2)
+    try:
         contracts = trade_client.get_option_contracts(req).option_contracts
-    return contracts
+        if len(contracts) < 5:
+            log(f"⚠️ Low contract count for {symbol}, retrying...")
+            time_module.sleep(2)
+            contracts = trade_client.get_option_contracts(req).option_contracts
+        return contracts
+    except Exception as e:
+        log(f"❌ Failed to get 0DTE contracts for {symbol}: {e}")
+        return []
 
 def log_trade(symbol, short_strike, long_strike, credit, spread_width, take_profit_price, stop_loss_price, status):
     with open(TRADE_LOG, "a", newline="") as f:
