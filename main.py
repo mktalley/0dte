@@ -36,7 +36,8 @@ else:
     API_KEY = os.getenv("ALPACA_API_KEY")
     API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 # Determine options market data feed based on environment
-OPTIONS_FEED = OptionsFeed.INDICATIVE if PAPER else OptionsFeed.OPRA
+# Use production options feed for market data
+OPTIONS_FEED = OptionsFeed.OPRA
 
 capital_pool = 100000
 max_risk_per_trade = 1000
@@ -53,8 +54,8 @@ timezone = ZoneInfo("America/New_York")
 
 # === CLIENTS ===
 trade_client = TradingClient(API_KEY, API_SECRET, paper=PAPER)
-option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=PAPER)
-stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=PAPER)
+option_data_client = OptionHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=False)
+stock_data_client = StockHistoricalDataClient(API_KEY, API_SECRET, use_basic_auth=True, sandbox=False)
 
 # === LOG FILES ===
 os.makedirs("logs", exist_ok=True)
