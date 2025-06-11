@@ -16,6 +16,7 @@ from types import SimpleNamespace
 # duplicate import removed (datetime already imported)
 
 from email.mime.text import MIMEText
+import requests
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderClass, OrderType, TimeInForce, AssetStatus, ContractType
 from alpaca.trading.requests import GetOptionContractsRequest, OptionLegRequest, LimitOrderRequest, StopLossRequest, TakeProfitRequest
@@ -38,8 +39,8 @@ else:
 # Market data credentials (live)
 DATA_API_KEY = os.getenv("ALPACA_API_KEY")
 DATA_API_SECRET = os.getenv("ALPACA_SECRET_KEY")
-# Determine options market data feed for market data (production OPRA)
-OPTIONS_FEED = OptionsFeed.OPRA
+# Determine options market data feed: use INDICATIVE for paper to avoid OPRA agreement requirement
+OPTIONS_FEED = OptionsFeed.INDICATIVE if PAPER else OptionsFeed.OPRA
 
 capital_pool = 100000
 max_risk_per_trade = 1000
@@ -169,7 +170,22 @@ def get_0dte_options(symbol):
             return contracts
         except Exception as e:
             log(f"❌ Failed to get 0DTE contracts via market data for {symbol}: {e}")
-            return []
+            log("ℹ️ Falling back to trading API for option contracts")
+            try:
+                req2 = GetOptionContractsRequest(
+                    underlying_symbols=[symbol],
+                    strike_price_gte=min_strike,
+                    strike_price_lte=max_strike,
+                    expiration_date=today,
+                    status=AssetStatus.ACTIVE,
+                    root_symbol=symbol,
+                    type=ContractType.PUT,
+                )
+                contracts2 = trade_client.get_option_contracts(req2).option_contracts
+                return contracts2
+            except Exception as e2:
+                log(f"❌ Fallback trading API failed for {symbol}: {e2}")
+                return []
     req = GetOptionContractsRequest(
         underlying_symbols=[symbol],
         strike_price_gte=min_strike,
