@@ -17,6 +17,8 @@ from alpaca.trading.requests import GetOptionContractsRequest, OptionLegRequest,
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient, StockLatestTradeRequest
 from alpaca.data.requests import OptionLatestQuoteRequest
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -465,6 +467,55 @@ def get_all_underlying_prices(tickers):
         return {}
 
 
+def get_market_regime():
+    """
+    Compute recent realized volatility and trend on SPY to determine filter overrides.
+    """
+    # Fetch last 20 daily bars for SPY
+    try:
+        resp = stock_data_client.get_bars(
+            StockBarsRequest(
+                symbol_or_symbols=["SPY"],
+                timeframe=TimeFrame.Day,
+                start=None,
+                end=None,
+                limit=20
+            )
+        ).data.get("SPY", [])
+    except Exception:
+        return {}
+    closes = [bar.close for bar in resp]
+    if len(closes) < 2:
+        return {}
+    returns = np.diff(closes) / closes[:-1]
+    realized_vol = np.std(returns) * (252 ** 0.5)
+    trend = (closes[-1] / closes[0] - 1)
+
+    # Base aggressive filters
+    overrides = {
+        "MIN_CREDIT_PERCENTAGE": 0.10,
+        "OI_THRESHOLD": 50,
+        "SHORT_PUT_DELTA_RANGE": (-0.7, -0.5),
+        "LONG_PUT_DELTA_RANGE": (-0.5, -0.3),
+        "SCAN_INTERVAL": 120,
+    }
+    # High vol: require more credit and OI
+    if realized_vol > 0.25:
+        overrides["MIN_CREDIT_PERCENTAGE"] = 0.12
+        overrides["OI_THRESHOLD"] = 100
+    # Strong uptrend: shallower strikes
+    if trend > 0.02:
+        overrides["SHORT_PUT_DELTA_RANGE"] = (-0.6, -0.4)
+        overrides["LONG_PUT_DELTA_RANGE"] = (-0.4, -0.2)
+    # Downtrend: deeper OTM but more credit
+    if trend < -0.02:
+        overrides["SHORT_PUT_DELTA_RANGE"] = (-0.8, -0.6)
+        overrides["LONG_PUT_DELTA_RANGE"] = (-0.6, -0.4)
+        overrides["MIN_CREDIT_PERCENTAGE"] = 0.15
+    return overrides
+
+
+
 def get_0dte_options(symbol):
     spot = get_all_underlying_prices([symbol]).get(symbol)
     if not spot: return []
@@ -497,7 +548,9 @@ def log_trade(symbol, short_strike, long_strike, credit, spread_width, status):
 
 def trade(symbol, spot):
     # === Symbol-specific filter overrides ===
-    overrides = SYMBOL_FILTER_OVERRIDES.get(symbol, {})
+    static_overrides = SYMBOL_FILTER_OVERRIDES.get(symbol, {})
+    live_overrides = get_market_regime() if symbol == "SPY" else {}
+    overrides = {**static_overrides, **live_overrides}
     threshold = overrides.get("OI_THRESHOLD", OI_THRESHOLD)
     short_range = overrides.get("SHORT_PUT_DELTA_RANGE", SHORT_PUT_DELTA_RANGE)
     long_range = overrides.get("LONG_PUT_DELTA_RANGE", LONG_PUT_DELTA_RANGE)

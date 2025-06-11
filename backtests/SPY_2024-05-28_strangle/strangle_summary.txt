@@ -1,0 +1,4 @@
+===== Static Daily Strangle Backtest =====
+Period: 2024-05-28 to 2025-05-28
+Params: -0.45/-0.1/+0.35/+0.15
+Trades: 251, Win Rate: 70.1%, Total PnL: $18351.01
