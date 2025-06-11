@@ -145,7 +145,6 @@ def get_0dte_options(symbol):
         try:
             chain = option_data_client.get_option_chain(
                 OptionChainRequest(
-                    underlying_symbol=symbol,
                     feed=OPTIONS_FEED,
                     type=ContractType.PUT,
                     strike_price_gte=spot*(1-STRIKE_RANGE),
@@ -178,7 +177,6 @@ def get_0dte_options(symbol):
                     strike_price_lte=max_strike,
                     expiration_date=today,
                     status=AssetStatus.ACTIVE,
-                    root_symbol=symbol,
                     type=ContractType.PUT,
                 )
                 contracts2 = trade_client.get_option_contracts(req2).option_contracts
@@ -192,7 +190,6 @@ def get_0dte_options(symbol):
         strike_price_lte=max_strike,
         expiration_date=today,
         status=AssetStatus.ACTIVE,
-        root_symbol=symbol,
         type=ContractType.PUT,
     )
     try:
@@ -247,12 +244,9 @@ def trade(symbol, spot):
         return
     try:
         order = LimitOrderRequest(
-                symbol=symbol,
-                side=OrderSide.SELL,
                 type=OrderType.LIMIT,
-            qty=1,
             limit_price=round(credit, 2),
-            order_class=OrderClass.BRACKET,
+            order_class=OrderClass.MLEG,
             time_in_force=TimeInForce.DAY,
             legs=[
                 OptionLegRequest(symbol=short_put[0].symbol, side=OrderSide.SELL, ratio_qty=1),
